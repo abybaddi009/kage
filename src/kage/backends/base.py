@@ -42,6 +42,29 @@ class WindowProvider(ABC):
     def activate_app(self, bundle_id: str) -> bool:
         """Activate the frontmost window of an app by bundle id."""
 
+    def frontmost_bundle_id(self) -> str | None:
+        """Return the bundle id of the currently frontmost application.
+
+        Concrete backends should override; the default returns None so
+        callers can degrade gracefully.
+        """
+        return None
+
+    def list_app_windows(self, bundle_id: str) -> list[WindowInfo]:
+        """Return windows belonging to a single application.
+
+        Default implementation filters ``list_windows`` by bundle id (or
+        app name when bundle id is unavailable). Backends with richer
+        per-app enumeration (e.g. AXUIElement on macOS) should override.
+        """
+        out: list[WindowInfo] = []
+        for w in self.list_windows():
+            if (w.bundle_id and w.bundle_id == bundle_id) or (
+                not w.bundle_id and not bundle_id
+            ):
+                out.append(w)
+        return out
+
 
 class AppProvider(ABC):
     @abstractmethod
@@ -52,11 +75,50 @@ class AppProvider(ABC):
     def launch(self, bundle_path: str) -> bool:
         """Launch an application by bundle path. Return success."""
 
+    def icon_for_bundle_id(self, bundle_id: str) -> str | None:
+        """Return a cached icon path for ``bundle_id`` or None.
+
+        Default scans ``list_apps``; backends may override for speed.
+        """
+        for app in self.list_apps():
+            if app.bundle_id == bundle_id:
+                return app.icon_path
+        return None
+
+
+class SwitcherHandler(ABC):
+    """Callback interface for hold-to-cycle hotkeys (Alt+Tab style).
+
+    The HotkeyProvider calls these in response to raw key/modifier events
+    while the switcher chord is active. Implementations drive the switcher
+    overlay and activation logic.
+    """
+
+    @abstractmethod
+    def on_trigger(self) -> None:
+        """The switcher chord was just pressed: show the overlay."""
+
+    @abstractmethod
+    def on_cycle(self, reverse: bool) -> None:
+        """Tab (forward) or Shift+Tab (backward) while modifiers held."""
+
+    @abstractmethod
+    def on_commit(self) -> None:
+        """The modifier was released: activate the selection and hide."""
+
+    @abstractmethod
+    def on_cancel(self) -> None:
+        """Escape (or another cancel) was pressed: hide without activating."""
+
 
 class HotkeyProvider(ABC):
     @abstractmethod
     def register(self, chord: str, callback) -> None:
-        """Register a chord (e.g. 'Super+A') with a callback."""
+        """Register a discrete chord (e.g. 'Super+A') with a callback."""
+
+    @abstractmethod
+    def register_switcher(self, chord: str, handler: SwitcherHandler) -> None:
+        """Register a hold-to-cycle switcher chord with a handler."""
 
     @abstractmethod
     def unregister(self, chord: str) -> None: ...

@@ -66,10 +66,10 @@ Status: ☐ todo · ◐ in progress · ☑ done
 - ☑ Verify end-to-end: cold launch of an app, activation of an open window, latency feels instant
 
 ### Phase 2 — Alt+Tab app switcher
-- ☐ CGEventTap: capture Alt+Tab, suppress delivery to focused app, detect Alt release
-- ☐ Switcher overlay UI: horizontal app icons, most-recently-used order, pre-built hidden
-- ☐ MRU tracking of app activations
-- ☐ Hold/cycle/commit state machine (Tab forward, Shift+Tab backward, Esc cancels)
+- ☑ CGEventTap: capture Alt+Tab, suppress delivery to focused app, detect Alt release
+- ☑ Switcher overlay UI: horizontal app icons, most-recently-used order, pre-built hidden
+- ☑ MRU tracking of app activations
+- ☑ Hold/cycle/commit state machine (Tab forward, Shift+Tab backward, Esc cancels)
 - ☐ Verify against fullscreen apps and multiple displays
 
 ### Phase 3 — Tilde+Tab window switcher

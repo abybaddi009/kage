@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QVBoxLayout
 
 from .config import Config, load_config
+from .mru import MRUTracker
 from .tray import TrayController
 
 
@@ -51,6 +52,9 @@ class KageApp(QObject):
         self._window_provider = None
         self._app_provider = None
         self._hotkey_provider = None
+        self._mru: MRUTracker | None = None
+        self._app_switcher: SwitcherController | None = None
+        self._window_switcher: SwitcherController | None = None
 
     def start(self) -> int:
         # Keep a hidden reference window so the app stays resident and can
@@ -129,6 +133,19 @@ class KageApp(QObject):
         self._palette.launch_app.connect(self._on_launch_app)
         self._palette.activate_app.connect(self._on_activate_app)
 
+        # MRU tracking shared by palette + switchers.
+        self._mru = MRUTracker()
+
+        # Alt+Tab app switcher overlay.
+        from .switcher import SwitcherController
+
+        self._app_switcher = SwitcherController(
+            self._window_provider, self._app_provider, self._mru, mode="apps"
+        )
+        self._hotkey_provider.register_switcher(
+            self.config.hotkeys.app_switcher, self._app_switcher
+        )
+
         # Register the launcher hotkey.
         self._hotkey_provider.register(
             self.config.hotkeys.launcher, self._palette.show_palette
@@ -139,6 +156,11 @@ class KageApp(QObject):
     def _on_activate_window(self, window_id: int) -> None:
         if self._window_provider is not None:
             self._window_provider.activate_window(window_id)
+            if self._mru is not None:
+                for w in self._window_provider.list_windows():
+                    if w.window_id == window_id:
+                        self._mru.touch(w.bundle_id or w.app_name)
+                        break
 
     @Slot(str)
     def _on_launch_app(self, bundle_path: str) -> None:
@@ -149,6 +171,8 @@ class KageApp(QObject):
     def _on_activate_app(self, bundle_id: str) -> None:
         if self._window_provider is not None:
             self._window_provider.activate_app(bundle_id)
+        if self._mru is not None:
+            self._mru.touch(bundle_id)
 
     @Slot()
     def _on_settings(self) -> None:
@@ -158,17 +182,26 @@ class KageApp(QObject):
 
     @Slot()
     def _on_reload(self) -> None:
-        old_chord = self.config.hotkeys.launcher
+        old_launch = self.config.hotkeys.launcher
+        old_switch = self.config.hotkeys.app_switcher
+        old_win = self.config.hotkeys.window_switcher
         self.config = load_config()
-        # Re-bind launcher hotkey if it changed.
         if self._hotkey_provider is not None and self._palette is not None:
-            if self.config.hotkeys.launcher != old_chord:
+            if self.config.hotkeys.launcher != old_launch:
                 try:
-                    self._hotkey_provider.unregister(old_chord)
+                    self._hotkey_provider.unregister(old_launch)
                 except Exception:
                     pass
                 self._hotkey_provider.register(
                     self.config.hotkeys.launcher, self._palette.show_palette
+                )
+            if self.config.hotkeys.app_switcher != old_switch and self._app_switcher is not None:
+                try:
+                    self._hotkey_provider.unregister(old_switch)
+                except Exception:
+                    pass
+                self._hotkey_provider.register_switcher(
+                    self.config.hotkeys.app_switcher, self._app_switcher
                 )
         self._palette.config = self.config if self._palette else None
         self.config_changed.emit()
