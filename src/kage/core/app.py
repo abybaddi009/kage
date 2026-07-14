@@ -98,12 +98,16 @@ class KageApp(QObject):
         self._tray.settings_clicked.connect(self._on_settings)
         self._tray.reload_clicked.connect(self._on_reload)
         self._tray.quit_clicked.connect(self.qt_app.quit)
+        self._tray.launch_at_login_toggled.connect(self._on_launch_at_login)
 
         if not QSystemTrayIcon_isAvailable():
             print(
                 "Warning: no system tray available; Kage will run headless.",
                 file=sys.stderr,
             )
+        else:
+            # Reflect current launch-at-login state into the tray checkbox.
+            self._sync_launch_at_login()
 
         return self.qt_app.exec()
 
@@ -185,9 +189,39 @@ class KageApp(QObject):
 
     @Slot()
     def _on_settings(self) -> None:
-        # Placeholder until the Settings UI is built in Phase 4.
-        if self._tray is not None:
-            self._tray.show_message("Kage", "Settings UI coming soon.")
+        from .settings import SettingsDialog
+
+        dlg = SettingsDialog(self.config, parent=self._hidden)
+        dlg.reloaded.connect(self._on_reload)
+        dlg.exec()
+
+    def _sync_launch_at_login(self) -> None:
+        if self._tray is None or sys.platform != "darwin":
+            return
+        try:
+            from ..platform.macos import launch_at_login
+
+            self._tray.set_launch_at_login_checked(launch_at_login.is_launch_at_login())
+        except Exception:
+            pass
+
+    @Slot(bool)
+    def _on_launch_at_login(self, enabled: bool) -> None:
+        if sys.platform != "darwin":
+            return
+        try:
+            from ..platform.macos import launch_at_login
+
+            ok = launch_at_login.set_launch_at_login(enabled)
+            self._tray.set_launch_at_login_checked(ok and enabled)
+            if not ok and self._tray is not None:
+                self._tray.show_message(
+                    "Kage",
+                    "Could not set launch-at-login. "
+                    "This works best when Kage is packaged as an app.",
+                )
+        except Exception:
+            pass
 
     @Slot()
     def _on_reload(self) -> None:

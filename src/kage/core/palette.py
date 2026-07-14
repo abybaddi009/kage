@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from ..backends.base import AppProvider, WindowProvider
 from .config import Config
 from .matcher import Result, match
+from .sources import load_sources
 
 
 class PaletteWindow(QWidget):
@@ -32,6 +33,7 @@ class PaletteWindow(QWidget):
         self._results: list[Result] = []
         self._window_provider: WindowProvider | None = None
         self._app_provider: AppProvider | None = None
+        self._sources: list = load_sources()
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -137,6 +139,13 @@ class PaletteWindow(QWidget):
         except Exception:
             return
         self._results = match(text, windows, apps, self.config.palette)
+        # Merge plugin result sources.
+        for src in self._sources:
+            try:
+                self._results.extend(src.search(text))
+            except Exception:
+                continue
+        self._results = self._results[: self.config.palette.max_results]
         self._list.clear()
         for r in self._results:
             item = QListWidgetItem(r.name)

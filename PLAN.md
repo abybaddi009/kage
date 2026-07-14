@@ -78,9 +78,9 @@ Status: ☐ todo · ◐ in progress · ☑ done
 - ☑ Reuse switcher overlay filtered to the active app's windows
 
 ### Phase 4 — Polish & extensibility
-- ☐ Settings UI from tray (edit bindings, launcher scope)
-- ☐ Plugin interface for launcher result sources (entry points)
-- ☐ Login item / launch-at-startup
+- ☑ Settings UI from tray (edit bindings, launcher scope)
+- ☑ Plugin interface for launcher result sources (entry points)
+- ☑ Login item / launch-at-startup
 - ☐ Packaging (`briefcase` or `pyinstaller`) — only if it outgrows `uv run`
 
 ### Later — other platforms

@@ -35,6 +35,7 @@ class TrayController(QObject):
     settings_clicked = Signal()
     reload_clicked = Signal()
     quit_clicked = Signal()
+    launch_at_login_toggled = Signal(bool)
 
     def __init__(self, app: QApplication) -> None:
         super().__init__()
@@ -50,6 +51,11 @@ class TrayController(QObject):
         act_settings.triggered.connect(self.settings_clicked.emit)
         menu.addAction(act_settings)
 
+        self._act_login = QAction("Launch at login", menu)
+        self._act_login.setCheckable(True)
+        self._act_login.toggled.connect(self.launch_at_login_toggled.emit)
+        menu.addAction(self._act_login)
+
         menu.addSeparator()
 
         act_reload = QAction("Reload config", menu)
@@ -61,6 +67,12 @@ class TrayController(QObject):
         menu.addAction(act_quit)
 
         self._tray.setContextMenu(menu)
+
+    def set_launch_at_login_checked(self, on: bool) -> None:
+        # Block signals to avoid a feedback loop when reflecting platform state.
+        self._act_login.blockSignals(True)
+        self._act_login.setChecked(on)
+        self._act_login.blockSignals(False)
 
     def show_message(self, title: str, body: str) -> None:
         self._tray.showMessage(title, body, QSystemTrayIcon.Information, 4000)

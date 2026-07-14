@@ -74,3 +74,31 @@ def _merge(cfg: Config, data: dict) -> Config:
     if "quit_on_tray_close" in data:
         cfg.quit_on_tray_close = bool(data["quit_on_tray_close"])
     return cfg
+
+
+def save_config(cfg: Config, path: Path | None = None) -> None:
+    """Write ``cfg`` to ``config.toml`` (creating the directory)."""
+    path = path or config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Kage configuration. Edit and use Reload config from the tray.",
+        "",
+        "[hotkeys]",
+        f'launcher = {_toml_str(cfg.hotkeys.launcher)}',
+        f'app_switcher = {_toml_str(cfg.hotkeys.app_switcher)}',
+        f'window_switcher = {_toml_str(cfg.hotkeys.window_switcher)}',
+        "",
+        "[palette]",
+        f"max_results = {int(cfg.palette.max_results)}",
+        f"windows_first = {'true' if cfg.palette.windows_first else 'false'}",
+        "",
+        f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
+        "",
+    ]
+    path.write_text("\n".join(lines))
+
+
+def _toml_str(s: str) -> str:
+    """Quote a string for TOML (basic strings, escaping backslashes)."""
+    escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
