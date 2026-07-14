@@ -193,6 +193,18 @@ class SettingsDialog(QDialog):
         self._windows_first.setChecked(config.palette.windows_first)
         form.addRow("", self._windows_first)
 
+        self._expand_windows = QCheckBox(
+            "Show every window as its own entry in Alt+Tab"
+        )
+        self._expand_windows.setChecked(config.switcher.expand_windows)
+        form.addRow("", self._expand_windows)
+
+        self._show_previews = QCheckBox(
+            "Show a live preview while switching"
+        )
+        self._show_previews.setChecked(config.switcher.show_previews)
+        form.addRow("", self._show_previews)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
         )
@@ -211,6 +223,8 @@ class SettingsDialog(QDialog):
         cfg.hotkeys.window_switcher = self._window_switcher.text().strip()
         cfg.palette.max_results = self._max_results.value()
         cfg.palette.windows_first = self._windows_first.isChecked()
+        cfg.switcher.expand_windows = self._expand_windows.isChecked()
+        cfg.switcher.show_previews = self._show_previews.isChecked()
         try:
             save_config(cfg)
         except Exception as exc:  # pragma: no cover - filesystem error

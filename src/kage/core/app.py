@@ -144,7 +144,8 @@ class KageApp(QObject):
         from .switcher import SwitcherController
 
         self._app_switcher = SwitcherController(
-            self._window_provider, self._app_provider, self._mru, mode="apps"
+            self._window_provider, self._app_provider, self._mru,
+            mode="apps", config=self.config,
         )
         self._hotkey_provider.register_switcher(
             self.config.hotkeys.app_switcher, self._app_switcher
@@ -153,7 +154,8 @@ class KageApp(QObject):
         # Alt+` per-app window switcher overlay (reuses the same UI filtered
         # to the frontmost app's windows via AXUIElement).
         self._window_switcher = SwitcherController(
-            self._window_provider, self._app_provider, self._mru, mode="windows"
+            self._window_provider, self._app_provider, self._mru,
+            mode="windows", config=self.config,
         )
         self._hotkey_provider.register_switcher(
             self.config.hotkeys.window_switcher, self._window_switcher
@@ -255,6 +257,10 @@ class KageApp(QObject):
                     self.config.hotkeys.window_switcher, self._window_switcher
                 )
         self._palette.config = self.config if self._palette else None
+        if self._app_switcher is not None:
+            self._app_switcher.config = self.config
+        if self._window_switcher is not None:
+            self._window_switcher.config = self.config
         self.config_changed.emit()
         if self._tray is not None:
             self._tray.show_message("Kage", "Configuration reloaded.")

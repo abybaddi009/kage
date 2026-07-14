@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..backends.base import AppProvider, WindowInfo, WindowProvider
+from .config import Config
 from .mru import MRUTracker
 
 
@@ -36,6 +37,9 @@ class _AppEntry:
     name: str
     icon_path: str | None
     bundle_id: str | None
+    # A representative window (e.g. the first one seen) used for the
+    # preview thumbnail -- app entries aren't tied to one specific window.
+    window_id: int | None = None
 
 
 @dataclass
@@ -115,6 +119,7 @@ class SwitcherOverlay(QWidget):
         self._entries: list = []  # _AppEntry | _WindowEntry
         self._mode = "apps"  # "apps" | "windows"
         self._index = 0
+        self._previews_enabled = False
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -123,6 +128,14 @@ class SwitcherOverlay(QWidget):
         )
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WA_DeleteOnClose, False)
+
+        self._preview_label = QLabel()
+        self._preview_label.setFixedSize(480, 270)
+        self._preview_label.setAlignment(Qt.AlignCenter)
+        self._preview_label.setStyleSheet(
+            "background:rgba(24,24,27,235);border-radius:10px;color:#9ca3af;"
+        )
+        self._preview_label.hide()
 
         self._container = QFrame()
         self._container.setObjectName("switcherBox")
@@ -136,6 +149,8 @@ class SwitcherOverlay(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+        outer.addWidget(self._preview_label, alignment=Qt.AlignHCenter)
         outer.addWidget(self._container)
 
         self.hide()
@@ -173,6 +188,33 @@ class SwitcherOverlay(QWidget):
             w = self._strip_layout.itemAt(i).widget()
             if isinstance(w, _ItemWidget):
                 w.set_selected(i == index)
+
+    def current_entry(self):
+        if not self._entries:
+            return None
+        return self._entries[self._index]
+
+    # ---- preview ----
+
+    def set_previews_enabled(self, enabled: bool) -> None:
+        self._previews_enabled = enabled
+        if not enabled:
+            self._preview_label.hide()
+            self._preview_label.clear()
+
+    def set_preview(self, pixmap: QPixmap | None) -> None:
+        if not self._previews_enabled:
+            return
+        if pixmap is None or pixmap.isNull():
+            self._preview_label.setPixmap(QPixmap())
+            self._preview_label.setText("No preview")
+        else:
+            scaled = pixmap.scaled(
+                self._preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            self._preview_label.setText("")
+            self._preview_label.setPixmap(scaled)
+        self._preview_label.show()
 
     # ---- navigation ----
 
@@ -237,11 +279,13 @@ class SwitcherController:
         app_provider: AppProvider,
         mru: MRUTracker,
         mode: str = "apps",
+        config: Config | None = None,
     ) -> None:
         self._wp = window_provider
         self._ap = app_provider
         self._mru = mru
         self._mode = mode
+        self.config = config
         self.overlay = SwitcherOverlay()
         self.overlay.activate_app.connect(self._on_activate_app)
         self.overlay.activate_window.connect(self._on_activate_window)
@@ -264,11 +308,38 @@ class SwitcherController:
                 name=w.app_name,
                 icon_path=icon,
                 bundle_id=w.bundle_id,
+                window_id=w.window_id,
             )
         all_keys = list(keys.values())
         ordered_keys = self._mru.order([e.key for e in all_keys])
         key_to_entry = {e.key: e for e in all_keys}
         return [key_to_entry[k] for k in ordered_keys if k in key_to_entry]
+
+    def _flat_window_entries(self) -> list[_WindowEntry]:
+        """Every window of every app as its own entry, MRU-ordered by app."""
+        windows = self._wp.list_windows()
+        by_app: dict[str, list[WindowInfo]] = {}
+        app_order: list[str] = []
+        for w in windows:
+            key = w.bundle_id or w.app_name
+            by_app.setdefault(key, []).append(w)
+            if key not in app_order:
+                app_order.append(key)
+        ordered_keys = self._mru.order(app_order)
+        out: list[_WindowEntry] = []
+        for key in ordered_keys:
+            for w in by_app.get(key, []):
+                icon = self._ap.icon_for_bundle_id(w.bundle_id) if w.bundle_id else None
+                out.append(
+                    _WindowEntry(
+                        window_id=w.window_id,
+                        title=w.window_title or w.app_name,
+                        app_name=w.app_name,
+                        icon_path=icon,
+                        bundle_id=w.bundle_id,
+                    )
+                )
+        return out
 
     def _app_windows(self) -> list[_WindowEntry]:
         bid = self._wp.frontmost_bundle_id()
@@ -297,25 +368,55 @@ class SwitcherController:
     # ---- SwitcherHandler interface ----
 
     def on_trigger(self) -> None:
+        show_previews = bool(self.config.switcher.show_previews) if self.config else False
+        self.overlay.set_previews_enabled(show_previews)
         if self._mode == "apps":
-            entries = self._running_apps()
-            # Start on the *previous* app (index 1) when possible, since
-            # index 0 is the current frontmost.
-            start = 1 if len(entries) > 1 else 0
-            self.overlay.set_apps(entries, select_index=start)
+            expand = bool(self.config.switcher.expand_windows) if self.config else False
+            if expand:
+                entries = self._flat_window_entries()
+                self.overlay.set_windows(
+                    entries, select_index=1 if len(entries) > 1 else 0
+                )
+            else:
+                entries = self._running_apps()
+                # Start on the *previous* app (index 1) when possible, since
+                # index 0 is the current frontmost.
+                start = 1 if len(entries) > 1 else 0
+                self.overlay.set_apps(entries, select_index=start)
         else:
             entries = self._app_windows()
             self.overlay.set_windows(entries, select_index=0)
+        self._update_preview()
         self.overlay.show_overlay()
 
     def on_cycle(self, reverse: bool) -> None:
         self.overlay.cycle(reverse)
+        self._update_preview()
 
     def on_commit(self) -> None:
+        entry = self.overlay.current_entry()
+        if isinstance(entry, _WindowEntry) and entry.bundle_id:
+            self._mru.touch(entry.bundle_id)
         self.overlay.commit()
 
     def on_cancel(self) -> None:
         self.overlay.hide()
+
+    def _update_preview(self) -> None:
+        if not (self.config and self.config.switcher.show_previews):
+            return
+        entry = self.overlay.current_entry()
+        window_id = getattr(entry, "window_id", None)
+        if window_id is None:
+            self.overlay.set_preview(None)
+            return
+        data = self._wp.capture_preview(window_id)
+        if not data:
+            self.overlay.set_preview(None)
+            return
+        pix = QPixmap()
+        pix.loadFromData(data, "PNG")
+        self.overlay.set_preview(pix)
 
     # ---- activation ----
 

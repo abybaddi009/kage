@@ -210,6 +210,42 @@ class MacWindowProvider(WindowProvider):
             )
         return out
 
+    def capture_preview(self, window_id: int) -> bytes | None:
+        # Negative ids are synthetic (AX-only, no resolvable CGWindowID --
+        # e.g. a minimized window); there's no compositor surface to grab.
+        if window_id <= 0:
+            return None
+        try:
+            from Quartz import (  # type: ignore
+                CGWindowListCreateImage,
+                CGRectNull,
+                kCGWindowListOptionIncludingWindow,
+                kCGWindowImageBoundsIgnoreFraming,
+                kCGWindowImageBestResolution,
+            )
+            from AppKit import (  # type: ignore
+                NSBitmapImageRep,
+                NSBitmapImageFileTypePNG,
+            )
+        except ImportError:
+            return None
+        try:
+            image = CGWindowListCreateImage(
+                CGRectNull,
+                kCGWindowListOptionIncludingWindow,
+                window_id,
+                kCGWindowImageBoundsIgnoreFraming | kCGWindowImageBestResolution,
+            )
+            if image is None:
+                return None
+            rep = NSBitmapImageRep.alloc().initWithCGImage_(image)
+            data = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, None)
+            if data is None:
+                return None
+            return bytes(data)
+        except Exception:
+            return None
+
     def activate_window(self, window_id: int) -> bool:
         # AX-cached window ref (from list_app_windows) takes priority.
         ref = self._ax_refs.get(window_id)

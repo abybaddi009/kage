@@ -36,9 +36,21 @@ class PaletteConfig:
 
 
 @dataclass
+class SwitcherConfig:
+    # Alt+Tab lists every window of every app as its own flat entry (with
+    # real titles) instead of grouping by app. When False (default), Alt+Tab
+    # shows one entry per app and Alt+` drills into that app's windows.
+    expand_windows: bool = False
+    # Show a live thumbnail of the currently-selected window/app while
+    # cycling in the Alt+Tab / Alt+` overlay.
+    show_previews: bool = True
+
+
+@dataclass
 class Config:
     hotkeys: HotkeyBindings = field(default_factory=HotkeyBindings)
     palette: PaletteConfig = field(default_factory=PaletteConfig)
+    switcher: SwitcherConfig = field(default_factory=SwitcherConfig)
     # If True, kage quits when the tray is removed rather than staying resident.
     quit_on_tray_close: bool = False
 
@@ -71,6 +83,13 @@ def _merge(cfg: Config, data: dict) -> Config:
         if "windows_first" in pal:
             cfg.palette.windows_first = bool(pal["windows_first"])
 
+    sw = data.get("switcher")
+    if isinstance(sw, dict):
+        if "expand_windows" in sw:
+            cfg.switcher.expand_windows = bool(sw["expand_windows"])
+        if "show_previews" in sw:
+            cfg.switcher.show_previews = bool(sw["show_previews"])
+
     if "quit_on_tray_close" in data:
         cfg.quit_on_tray_close = bool(data["quit_on_tray_close"])
     return cfg
@@ -91,6 +110,10 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         "[palette]",
         f"max_results = {int(cfg.palette.max_results)}",
         f"windows_first = {'true' if cfg.palette.windows_first else 'false'}",
+        "",
+        "[switcher]",
+        f"expand_windows = {'true' if cfg.switcher.expand_windows else 'false'}",
+        f"show_previews = {'true' if cfg.switcher.show_previews else 'false'}",
         "",
         f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
         "",

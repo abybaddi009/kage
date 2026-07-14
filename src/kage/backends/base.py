@@ -65,6 +65,15 @@ class WindowProvider(ABC):
                 out.append(w)
         return out
 
+    def capture_preview(self, window_id: int) -> bytes | None:
+        """Return a PNG-encoded thumbnail of a window, or None if unavailable.
+
+        Default implementation has no way to render a thumbnail; backends
+        with a screen-capture API (e.g. CGWindowListCreateImage on macOS)
+        should override.
+        """
+        return None
+
 
 class AppProvider(ABC):
     @abstractmethod
