@@ -114,8 +114,13 @@ class SwitcherHandler(ABC):
     """
 
     @abstractmethod
-    def on_trigger(self) -> None:
-        """The switcher chord was just pressed: show the overlay."""
+    def on_trigger(self, reverse: bool = False) -> None:
+        """The switcher chord was just pressed: show the overlay.
+
+        ``reverse`` is True when Shift was held on the initial press (e.g.
+        Alt+Shift+Tab), so the handler can start on the last entry instead
+        of the next one -- a single tap then switches one window backward.
+        """
 
     @abstractmethod
     def on_cycle(self, reverse: bool) -> None:

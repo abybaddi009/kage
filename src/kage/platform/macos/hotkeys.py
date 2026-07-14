@@ -44,7 +44,7 @@ class _HotkeyBridge(QObject):
 class _SwitcherBridge(QObject):
     """Marshals switcher-mode events from the tap thread to the main thread."""
 
-    trigger = Signal()
+    trigger = Signal(bool)  # reverse? (Shift held on initial press)
     cycle = Signal(bool)  # reverse?
     commit = Signal()
     cancel = Signal()
@@ -121,10 +121,10 @@ class MacHotkeyProvider(HotkeyProvider):
             except Exception:
                 pass
 
-    def _on_switcher_trigger(self) -> None:
+    def _on_switcher_trigger(self, reverse: bool) -> None:
         if self._active_switcher is not None:
             try:
-                self._active_switcher[1].on_trigger()
+                self._active_switcher[1].on_trigger(reverse)
             except Exception:
                 pass
 
@@ -239,7 +239,7 @@ class MacHotkeyProvider(HotkeyProvider):
                     continue
                 self._in_switcher = True
                 self._active_switcher = (hk, handler)
-                self._switcher_bridge.trigger.emit()
+                self._switcher_bridge.trigger.emit(bool(flags & SHIFT))
                 return None  # suppress the initial key
             return event
 

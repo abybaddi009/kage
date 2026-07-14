@@ -1,6 +1,16 @@
-# Kage
+<p align="center">
+  <img src="assets/logo.png" alt="Kage logo" width="240">
+</p>
 
-The window switcher macOS should have shipped with.
+<h1 align="center">Kage</h1>
+
+<p align="center">The window switcher macOS should have shipped with.</p>
+
+---
+
+<p align="center">
+  <img src="assets/switcher-hero.png" alt="Kage switcher in action">
+</p>
 
 macOS's built-in `Cmd+Tab` is a 20-year-old row of blurry icons. It can't show
 minimized windows, can't preview what you're switching to, can't let you pick a

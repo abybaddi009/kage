@@ -434,7 +434,7 @@ class SwitcherController:
 
     # ---- SwitcherHandler interface ----
 
-    def on_trigger(self) -> None:
+    def on_trigger(self, reverse: bool = False) -> None:
         show_previews = bool(self.config.switcher.show_previews) if self.config else False
         theme = self.config.switcher.theme if self.config else "default"
         expand = bool(self.config.switcher.expand_windows) if self.config else False
@@ -451,18 +451,24 @@ class SwitcherController:
             # not one tile per app -- force the flat list for this theme.
             if expand or theme == "window_previews":
                 entries = self._flat_window_entries()
-                select_index = 1 if len(entries) > 1 else 0
                 setter = self.overlay.set_windows
             else:
                 entries = self._running_apps()
-                # Start on the *previous* app (index 1) when possible, since
-                # index 0 is the current frontmost.
-                select_index = 1 if len(entries) > 1 else 0
                 setter = self.overlay.set_apps
         else:
             entries = self._app_windows()
-            select_index = 0
             setter = self.overlay.set_windows
+
+        # A single tap of the chord should switch one window/app, not just
+        # re-show the current one. Start one step in the chosen direction:
+        # forward lands on the previous app / next window, reverse (Shift
+        # held, e.g. Alt+Shift+Tab) lands on the last entry. Without this,
+        # the window switcher (mode="windows") started on index 0, the
+        # current window, so a quick tap-and-release did nothing.
+        if len(entries) > 1:
+            select_index = (len(entries) - 1) if reverse else 1
+        else:
+            select_index = 0
 
         tile_previews = (
             self._capture_tile_previews(entries)
