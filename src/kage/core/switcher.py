@@ -14,7 +14,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
-    QHBoxLayout,
     QLabel,
     QStackedLayout,
     QVBoxLayout,
@@ -133,6 +132,98 @@ class _ItemWidget(QFrame):
             )
 
 
+class _FlowContainer(QFrame):
+    """A frame that lays its child tiles out in wrapped, center-aligned rows.
+
+    Unlike ``QHBoxLayout``, tiles flow left-to-right and wrap onto a new
+    row once they would exceed ``max_content_width`` (typically the host
+    screen's available width). Each row is centered horizontally within
+    the container so the strip stays visually balanced regardless of how
+    many windows are open.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._tiles: list[_ItemWidget] = []
+        self._max_content_width: int = 10_000
+        self._h_spacing: int = 8
+        self._v_spacing: int = 8
+        self._margins = (12, 12, 12, 12)
+
+    def set_tiles(self, tiles: list[_ItemWidget]) -> None:
+        for t in self._tiles:
+            t.setParent(None)
+            t.deleteLater()
+        self._tiles = list(tiles)
+        for t in self._tiles:
+            t.setParent(self)
+            t.show()
+        self._relayout()
+
+    def clear(self) -> None:
+        self.set_tiles([])
+
+    def tile(self, index: int) -> _ItemWidget | None:
+        if 0 <= index < len(self._tiles):
+            return self._tiles[index]
+        return None
+
+    def count(self) -> int:
+        return len(self._tiles)
+
+    def set_max_content_width(self, width: int) -> None:
+        self._max_content_width = max(1, width)
+        self._relayout()
+
+    def set_margins(self, left: int, top: int, right: int, bottom: int) -> None:
+        self._margins = (left, top, right, bottom)
+        self._relayout()
+
+    def set_spacing(self, horizontal: int, vertical: int) -> None:
+        self._h_spacing = horizontal
+        self._v_spacing = vertical
+        self._relayout()
+
+    def _relayout(self) -> None:
+        ml, mt, mr, mb = self._margins
+        if not self._tiles:
+            self.setFixedSize(ml + mr, mt + mb)
+            return
+        avail = max(1, self._max_content_width - ml - mr)
+        # Group tiles into rows that fit within ``avail``.
+        rows: list[list[_ItemWidget]] = []
+        cur: list[_ItemWidget] = []
+        cur_w = 0
+        for t in self._tiles:
+            tw = t.width()
+            if cur and cur_w + self._h_spacing + tw > avail:
+                rows.append(cur)
+                cur = []
+                cur_w = 0
+            if cur:
+                cur_w += self._h_spacing
+            cur.append(t)
+            cur_w += tw
+        if cur:
+            rows.append(cur)
+        # Width of each row (sum of tile widths + spacing between them).
+        row_widths = [
+            sum(t.width() for t in row) + self._h_spacing * (len(row) - 1)
+            for row in rows
+        ]
+        content_w = max(row_widths)
+        # Position each row, centered horizontally within ``content_w``.
+        y = mt
+        for row, rw in zip(rows, row_widths):
+            x = ml + (content_w - rw) // 2
+            for t in row:
+                t.setGeometry(x, y, t.width(), t.height())
+                x += t.width() + self._h_spacing
+            y += max(t.height() for t in row) + self._v_spacing
+        y -= self._v_spacing  # undo the trailing gap added after last row
+        self.setFixedSize(content_w + ml + mr, y + mb)
+
+
 class SwitcherOverlay(QWidget):
     activate_app = Signal(str)  # bundle_id (or app key when no bundle id)
     activate_window = Signal(int)  # window_id
@@ -147,6 +238,7 @@ class SwitcherOverlay(QWidget):
         self._screen_preference = "active"
         self._window_provider: WindowProvider | None = None
         self._tile_previews: dict[int, QPixmap] = {}
+        self._max_content_width: int = 10_000
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -164,21 +256,19 @@ class SwitcherOverlay(QWidget):
         )
         self._preview_label.hide()
 
-        self._container = QFrame()
+        self._container = _FlowContainer()
         self._container.setObjectName("switcherBox")
         self._container.setStyleSheet(
             "#switcherBox{background:rgba(24,24,27,235);border-radius:14px;}"
         )
-
-        self._strip_layout = QHBoxLayout(self._container)
-        self._strip_layout.setContentsMargins(12, 12, 12, 12)
-        self._strip_layout.setSpacing(8)
+        self._container.set_margins(12, 12, 12, 12)
+        self._container.set_spacing(8, 8)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(8)
         outer.addWidget(self._preview_label, alignment=Qt.AlignHCenter)
-        outer.addWidget(self._container)
+        outer.addWidget(self._container, alignment=Qt.AlignHCenter)
 
         self.hide()
 
@@ -218,11 +308,7 @@ class SwitcherOverlay(QWidget):
         self._select(min(select_index, max(0, len(entries) - 1)))
 
     def _rebuild(self) -> None:
-        while self._strip_layout.count():
-            it = self._strip_layout.takeAt(0)
-            w = it.widget()
-            if w is not None:
-                w.deleteLater()
+        tiles: list[_ItemWidget] = []
         for e in self._entries:
             preview = None
             if self._theme == "window_previews":
@@ -233,12 +319,17 @@ class SwitcherOverlay(QWidget):
                 tile = _ItemWidget(e.icon_path, e.name, preview=preview)
             else:
                 tile = _ItemWidget(e.icon_path, e.title or e.app_name, preview=preview)
-            self._strip_layout.addWidget(tile)
+            tiles.append(tile)
+        self._container.set_tiles(tiles)
+        # Re-apply the screen-derived width constraint now that the tiles
+        # changed; without it the flow container would fall back to its
+        # default (very wide) bound and lay out a single row.
+        self._container.set_max_content_width(self._max_content_width)
 
     def _select(self, index: int) -> None:
         self._index = index
-        for i in range(self._strip_layout.count()):
-            w = self._strip_layout.itemAt(i).widget()
+        for i in range(self._container.count()):
+            w = self._container.tile(i)
             if isinstance(w, _ItemWidget):
                 w.set_selected(i == index)
 
@@ -303,14 +394,22 @@ class SwitcherOverlay(QWidget):
     # ---- show / hide ----
 
     def show_overlay(self) -> None:
-        self.adjustSize()
         current = self.screen() if hasattr(self, "screen") else None
         screen = target_screen(self._screen_preference, current, self._window_provider)
         if screen is not None:
             sg = screen.availableGeometry()
+            # Leave a comfortable gutter on either side of the strip so the
+            # rounded container never kisses the screen edges, and constrain
+            # the flow layout so tiles wrap into rows before overflowing.
+            gutter = 64
+            self._max_content_width = max(200, sg.width() - gutter * 2)
+            self._container.set_max_content_width(self._max_content_width)
+            self.adjustSize()
             x = sg.center().x() - self.width() // 2
             y = int(sg.center().y() * 0.4) - self.height() // 2
             self.move(x, y)
+        else:
+            self.adjustSize()
         self.show()
         self.raise_()
 
