@@ -1,0 +1,10 @@
+# Example Kage config. Copy to ~/.config/kage/config.toml to override defaults.
+
+[hotkeys]
+launcher = "Super+A"
+app_switcher = "Alt+Tab"
+window_switcher = "Alt+`"
+
+[palette]
+max_results = 12
+windows_first = true

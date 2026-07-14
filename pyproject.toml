@@ -1,0 +1,28 @@
+[project]
+name = "kage"
+version = "0.1.0"
+description = "Extensible application launcher and window switcher (macOS first)."
+readme = "README.md"
+authors = [
+    { name = "Abhishek Baddi", email = "abybaddi009@gmail.com" },
+]
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.7",
+    "rapidfuzz>=3.9",
+    # macOS platform backend (pyobjc)
+    "pyobjc-core>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+kage = "kage.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
