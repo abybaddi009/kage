@@ -50,6 +50,16 @@ class WindowProvider(ABC):
         """
         return None
 
+    def frontmost_window_center(self) -> tuple[float, float] | None:
+        """Center point, in global screen coordinates, of the frontmost
+        window -- used to determine which monitor is "active" on a
+        multi-display setup.
+
+        Concrete backends should override; the default returns None so
+        callers can fall back to another screen-selection strategy.
+        """
+        return None
+
     def list_app_windows(self, bundle_id: str) -> list[WindowInfo]:
         """Return windows belonging to a single application.
 

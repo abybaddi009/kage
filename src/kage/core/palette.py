@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from ..backends.base import AppProvider, WindowProvider
 from .config import Config
 from .matcher import Result, match
+from .screens import target_screen
 from .sources import load_sources
 
 
@@ -79,11 +80,10 @@ class PaletteWindow(QWidget):
         self._field.clear()
         self._refresh("")
         self.adjustSize()
-        screen = self.screen() if hasattr(self, "screen") else None
-        if screen is None:
-            from PySide6.QtGui import QGuiApplication
-
-            screen = QGuiApplication.primaryScreen()
+        current = self.screen() if hasattr(self, "screen") else None
+        screen = target_screen(
+            self.config.screen_preference, current, self._window_provider
+        )
         if screen is not None:
             sg = screen.availableGeometry()
             x = sg.center().x() - self.width() // 2

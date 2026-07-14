@@ -22,8 +22,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..backends.base import AppProvider, WindowInfo, WindowProvider
+from .activation import activate_window_reliably
 from .config import Config
 from .mru import MRUTracker
+from .screens import target_screen
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +144,8 @@ class SwitcherOverlay(QWidget):
         self._index = 0
         self._previews_enabled = False
         self._theme = "default"
+        self._screen_preference = "active"
+        self._window_provider: WindowProvider | None = None
         self._tile_previews: dict[int, QPixmap] = {}
 
         self.setWindowFlags(
@@ -182,6 +186,12 @@ class SwitcherOverlay(QWidget):
 
     def set_theme(self, theme: str) -> None:
         self._theme = theme
+
+    def set_screen_preference(
+        self, preference: str, window_provider: WindowProvider | None = None
+    ) -> None:
+        self._screen_preference = preference
+        self._window_provider = window_provider
 
     def set_apps(
         self,
@@ -294,9 +304,8 @@ class SwitcherOverlay(QWidget):
 
     def show_overlay(self) -> None:
         self.adjustSize()
-        from PySide6.QtGui import QGuiApplication
-
-        screen = QGuiApplication.primaryScreen()
+        current = self.screen() if hasattr(self, "screen") else None
+        screen = target_screen(self._screen_preference, current, self._window_provider)
         if screen is not None:
             sg = screen.availableGeometry()
             x = sg.center().x() - self.width() // 2
@@ -430,6 +439,9 @@ class SwitcherController:
         theme = self.config.switcher.theme if self.config else "default"
         expand = bool(self.config.switcher.expand_windows) if self.config else False
         self.overlay.set_theme(theme)
+        self.overlay.set_screen_preference(
+            self.config.screen_preference if self.config else "active", self._wp
+        )
         # The window_previews theme shows a screenshot per tile already, so
         # the single large "current selection" preview would be redundant.
         self.overlay.set_previews_enabled(show_previews and theme == "default")
@@ -525,8 +537,8 @@ class SwitcherController:
                 if w.bundle_id:
                     self._wp.activate_app(w.bundle_id)
                 else:
-                    self._wp.activate_window(w.window_id)
+                    activate_window_reliably(self._wp, w.window_id)
                 return
 
     def _on_activate_window(self, window_id: int) -> None:
-        self._wp.activate_window(window_id)
+        activate_window_reliably(self._wp, window_id)

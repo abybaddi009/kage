@@ -170,7 +170,9 @@ class KageApp(QObject):
     @Slot(int)
     def _on_activate_window(self, window_id: int) -> None:
         if self._window_provider is not None:
-            self._window_provider.activate_window(window_id)
+            from .activation import activate_window_reliably
+
+            activate_window_reliably(self._window_provider, window_id)
             if self._mru is not None:
                 for w in self._window_provider.list_windows():
                     if w.window_id == window_id:

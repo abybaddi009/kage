@@ -35,6 +35,12 @@ _SWITCHER_THEMES = [
     ("window_previews", "Window Previews (every window shown as a thumbnail)"),
 ]
 
+# (config value, display label) -- keep in sync with SCREEN_PREFERENCES in config.py.
+_SCREEN_PREFERENCES = [
+    ("active", "Active Screen"),
+    ("pointer", "Screen with Pointer"),
+]
+
 # Qt.Key -> chord key token, matching the names parse_chord()/_KEYCODES accept.
 _KEY_NAMES: dict[int, str] = {
     Qt.Key_Tab: "tab",
@@ -219,6 +225,13 @@ class SettingsDialog(QDialog):
         self._theme.setCurrentIndex(idx if idx >= 0 else 0)
         form.addRow("Switcher theme", self._theme)
 
+        self._screen_preference = QComboBox()
+        for value, label in _SCREEN_PREFERENCES:
+            self._screen_preference.addItem(label, value)
+        idx = self._screen_preference.findData(config.screen_preference)
+        self._screen_preference.setCurrentIndex(idx if idx >= 0 else 0)
+        form.addRow("Open launcher/switcher on", self._screen_preference)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
         )
@@ -240,6 +253,7 @@ class SettingsDialog(QDialog):
         cfg.switcher.expand_windows = self._expand_windows.isChecked()
         cfg.switcher.show_previews = self._show_previews.isChecked()
         cfg.switcher.theme = self._theme.currentData()
+        cfg.screen_preference = self._screen_preference.currentData()
         try:
             save_config(cfg)
         except Exception as exc:  # pragma: no cover - filesystem error

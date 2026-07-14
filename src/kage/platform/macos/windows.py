@@ -52,6 +52,28 @@ def _ax_attr(element, attribute):
     return value
 
 
+def _ax_set_focused(ref) -> None:
+    """Explicitly set AXFocused=true on a window ref.
+
+    kAXRaiseAction only reorders the window within its own app/process --
+    it does not move the system's keyboard focus off the currently active
+    display. With "Displays have separate Spaces" (the default), a window
+    on another monitor stays inert to Cmd-Tab-style raise/activate calls
+    alone; setting kAXFocusedAttribute directly asks the Accessibility
+    runloop to give that specific window system-wide keyboard focus, which
+    is what actually shifts focus (and the menu bar) onto its display.
+    """
+    try:
+        from ApplicationServices import (  # type: ignore
+            AXUIElementSetAttributeValue,
+            kAXFocusedAttribute,
+        )
+
+        AXUIElementSetAttributeValue(ref, kAXFocusedAttribute, True)
+    except Exception:
+        pass
+
+
 def _ax_cg_window_id(ax_ref) -> int | None:
     """Resolve an AXUIElement window ref to its real CGWindowID, if possible."""
     fn = _ax_get_window_fn()
@@ -138,6 +160,47 @@ class MacWindowProvider(WindowProvider):
             return str(bid) if bid else None
         except Exception:
             return None
+
+    def frontmost_window_center(self) -> tuple[float, float] | None:
+        """Center point, in global screen coordinates, of the frontmost
+        app's topmost on-screen window -- used to pick which monitor is
+        "active" when the launcher/switcher opens on a multi-display setup.
+        """
+        try:
+            from Cocoa import NSWorkspace  # type: ignore
+            from Quartz import (  # type: ignore
+                CGWindowListCopyWindowInfo,
+                kCGWindowListOptionOnScreenOnly,
+                kCGNullWindowID,
+            )
+        except ImportError:
+            return None
+        front = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if front is None:
+            return None
+        pid = int(front.processIdentifier())
+        # Onscreen windows come back already ordered front-to-back, so the
+        # first layer-0 (normal) window owned by this pid is the frontmost
+        # one -- no need to resolve a specific CGWindowID.
+        info_list = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+        )
+        if not info_list:
+            return None
+        for info in info_list:
+            if int(info.get("kCGWindowOwnerPID", -1)) != pid:
+                continue
+            if int(info.get("kCGWindowLayer", -1)) != 0:
+                continue
+            bounds = info.get("kCGWindowBounds")
+            if not bounds:
+                continue
+            x = float(bounds.get("X", 0))
+            y = float(bounds.get("Y", 0))
+            w = float(bounds.get("Width", 0))
+            h = float(bounds.get("Height", 0))
+            return (x + w / 2, y + h / 2)
+        return None
 
     def list_app_windows(self, bundle_id: str) -> list[WindowInfo]:
         """Enumerate windows of one app via AXUIElement (kAXChildrenAttribute).
@@ -288,7 +351,14 @@ class MacWindowProvider(WindowProvider):
                 kAXRaiseAction,
             )
 
-            AXUIElementPerformAction(ref, kAXRaiseAction)
+            # Activate the owning app *before* raising the specific window,
+            # not after: NSApplicationActivateAllWindows asks the app to
+            # bring its own windows forward using its internal notion of
+            # "key window", which for multi-window apps (Electron apps like
+            # VS Code in particular) can override a raise performed first --
+            # silently re-focusing whatever window the app had last focused
+            # instead of the one the user picked. Raising last makes the AX
+            # action the final word on which window ends up frontmost.
             pid = None
             try:
                 from ApplicationServices import (  # type: ignore
@@ -305,6 +375,8 @@ class MacWindowProvider(WindowProvider):
                 app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
                 if app is not None:
                     self._activate_app(app)
+            AXUIElementPerformAction(ref, kAXRaiseAction)
+            _ax_set_focused(ref)
             return True
         except Exception:
             return False
@@ -334,9 +406,11 @@ class MacWindowProvider(WindowProvider):
     ) -> bool:
         NSRunningApplication, _ = _import_cocoa()
         app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-        raised = self._ax_raise_window(pid, cg_window_id, title)
+        # Activate the app first, then raise the specific window last -- see
+        # the comment in _ax_raise_ref for why the ordering matters.
         if app is not None:
             self._activate_app(app)
+        raised = self._ax_raise_window(pid, cg_window_id, title)
         if not raised and bundle_id:
             # Fall back to activating the whole app.
             return self.activate_app(bundle_id)
@@ -397,6 +471,7 @@ class MacWindowProvider(WindowProvider):
             from ApplicationServices import AXUIElementPerformAction  # type: ignore
 
             AXUIElementPerformAction(best, kAXRaiseAction)
+            _ax_set_focused(best)
             return True
         except Exception:
             return False

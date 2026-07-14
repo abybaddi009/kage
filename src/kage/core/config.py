@@ -54,6 +54,9 @@ class SwitcherConfig:
     theme: str = "default"
 
 
+SCREEN_PREFERENCES = ("active", "pointer")
+
+
 @dataclass
 class Config:
     hotkeys: HotkeyBindings = field(default_factory=HotkeyBindings)
@@ -61,6 +64,10 @@ class Config:
     switcher: SwitcherConfig = field(default_factory=SwitcherConfig)
     # If True, kage quits when the tray is removed rather than staying resident.
     quit_on_tray_close: bool = False
+    # Which screen the launcher palette and switcher overlay open on: "active"
+    # (the screen the window last occupied, falling back to the primary
+    # screen) or "pointer" (the screen currently under the mouse cursor).
+    screen_preference: str = "active"
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -102,6 +109,9 @@ def _merge(cfg: Config, data: dict) -> Config:
 
     if "quit_on_tray_close" in data:
         cfg.quit_on_tray_close = bool(data["quit_on_tray_close"])
+
+    if "screen_preference" in data and str(data["screen_preference"]) in SCREEN_PREFERENCES:
+        cfg.screen_preference = str(data["screen_preference"])
     return cfg
 
 
@@ -111,6 +121,9 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Kage configuration. Edit and use Reload config from the tray.",
+        "",
+        f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
+        f'screen_preference = {_toml_str(cfg.screen_preference)}',
         "",
         "[hotkeys]",
         f'launcher = {_toml_str(cfg.hotkeys.launcher)}',
@@ -125,8 +138,6 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         f"expand_windows = {'true' if cfg.switcher.expand_windows else 'false'}",
         f"show_previews = {'true' if cfg.switcher.show_previews else 'false'}",
         f'theme = {_toml_str(cfg.switcher.theme)}',
-        "",
-        f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
         "",
     ]
     path.write_text("\n".join(lines))
