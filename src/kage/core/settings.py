@@ -5,18 +5,21 @@ captured by recording an actual key press (via :class:`ChordCaptureEdit`)
 rather than typed as free text, so the resulting chord string always matches
 what ``parse_chord`` expects.
 
-The dialog uses a macOS System Settings-style sidebar (section list) with a
-stacked content pane on the right. "Launch at login" lives in the General
-section; the switcher theme is picked from image cards.
+The dialog uses a macOS System Settings-style layout: an iconized sidebar on
+the left and grouped "card" rows on the right. Native controls (checkboxes,
+combo boxes, buttons) are left unstyled so they match the OS; only the
+containers are themed, with colors derived from the system palette so the
+dialog follows light/dark mode automatically.
 """
 
 from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -39,16 +42,27 @@ from .. import __version__
 from .config import Config, save_config
 from .paths import logo_path, theme_preview_path
 
-# (config value, display label) -- keep in sync with SWITCHER_THEMES in config.py.
+# (config value, name, description) -- keep values in sync with
+# SWITCHER_THEMES in config.py.
 _SWITCHER_THEMES = [
-    ("default", "Default (icons + selected-window preview)"),
-    ("window_previews", "Window Previews (every window shown as a thumbnail)"),
+    ("default", "Default", "Icons with a preview of the selected window"),
+    ("window_previews", "Window Previews", "Every window shown as a thumbnail"),
 ]
 
 # (config value, display label) -- keep in sync with SCREEN_PREFERENCES in config.py.
 _SCREEN_PREFERENCES = [
     ("active", "Active Screen"),
     ("pointer", "Screen with Pointer"),
+]
+
+# Sidebar sections: (title, icon glyph, icon tile color). Glyphs use the
+# text presentation selector (U+FE0E) where needed so they take the white
+# pen color instead of rendering as color emoji.
+_SECTIONS = [
+    ("General", "⚙︎", "#8e8e93"),
+    ("Switcher", "❐", "#3478f6"),
+    ("Shortcuts", "⌘", "#af52de"),
+    ("About", "ℹ︎", "#f09a37"),
 ]
 
 # Qt.Key -> chord key token, matching the names parse_chord()/_KEYCODES accept.
@@ -178,7 +192,56 @@ def _chord_row(initial: str) -> tuple[QWidget, ChordCaptureEdit]:
     layout.setContentsMargins(0, 0, 0, 0)
     layout.addWidget(edit, stretch=1)
     layout.addWidget(button)
+    row.setFixedWidth(270)
     return row, edit
+
+
+# ---------------------------------------------------------------------------
+# Theme tokens (derived from the system palette so light/dark both work)
+# ---------------------------------------------------------------------------
+
+
+class _Tokens:
+    def __init__(self) -> None:
+        pal = QApplication.palette()
+        self.dark = pal.color(QPalette.Window).lightness() < 128
+        self.accent = pal.color(QPalette.Highlight).name()
+        if self.dark:
+            self.card_bg = "rgba(255,255,255,6%)"
+            self.card_border = "rgba(255,255,255,10%)"
+            self.separator = "rgba(255,255,255,9%)"
+            self.sidebar_bg = "rgba(0,0,0,14%)"
+            self.hover = "rgba(255,255,255,8%)"
+            self.hover_border = "rgba(255,255,255,25%)"
+            self.muted = "#98989d"
+        else:
+            self.card_bg = "#ffffff"
+            self.card_border = "rgba(0,0,0,8%)"
+            self.separator = "rgba(0,0,0,8%)"
+            self.sidebar_bg = "rgba(0,0,0,4%)"
+            self.hover = "rgba(0,0,0,5%)"
+            self.hover_border = "rgba(0,0,0,20%)"
+            self.muted = "#6e6e73"
+
+
+def _section_icon(glyph: str, color: str) -> QIcon:
+    """Paint a macOS System Settings-style icon tile: colored rounded
+    square with a white glyph. Rendered at 2x for retina displays."""
+    pm = QPixmap(40, 40)
+    pm.setDevicePixelRatio(2.0)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(color))
+    p.drawRoundedRect(QRectF(0, 0, 20, 20), 5, 5)
+    p.setPen(QColor("#ffffff"))
+    font = QFont()
+    font.setPixelSize(12)
+    p.setFont(font)
+    p.drawText(QRectF(0, 0, 20, 20), Qt.AlignCenter, glyph)
+    p.end()
+    return QIcon(pm)
 
 
 # ---------------------------------------------------------------------------
@@ -187,67 +250,73 @@ def _chord_row(initial: str) -> tuple[QWidget, ChordCaptureEdit]:
 
 
 class _ThemeCard(QFrame):
-    """A clickable preview card for one switcher theme."""
+    """A clickable preview card for one switcher theme.
 
-    def __init__(self, value: str, label: str, image_path) -> None:
+    Selection is shown as an accent border around the card (styled from the
+    dialog-level stylesheet via the ``selected`` dynamic property) so the
+    preview image stays visible.
+    """
+
+    def __init__(self, value: str, name: str, desc: str, image_path) -> None:
         super().__init__()
         self._value = value
-        self._selected = False
         self.setObjectName("themeCard")
+        self.setProperty("selected", False)
         self.setCursor(Qt.PointingHandCursor)
 
-        pic = QLabel()
-        pic.setAlignment(Qt.AlignCenter)
-        pix = QPixmap(str(image_path)) if image_path is not None else QPixmap()
-        if not pix.isNull():
-            pic.setPixmap(
-                pix.scaled(
-                    260, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
-            )
-        else:
-            pic.setFixedSize(260, 150)
-            pic.setText("(no preview)")
-            pic.setStyleSheet("color:#9ca3af;")
+        self._pic = QLabel()
+        self._pic.setAlignment(Qt.AlignCenter)
+        self._pic.setFixedSize(200, 120)
+        self._pic.setObjectName("muted")
+        self.set_image(image_path)
+        pic = self._pic
 
-        text = QLabel(label)
-        text.setWordWrap(True)
-        text.setAlignment(Qt.AlignCenter)
-        f = text.font()
+        title = QLabel(name)
+        title.setAlignment(Qt.AlignCenter)
+        f = title.font()
+        f.setBold(True)
+        title.setFont(f)
+
+        sub = QLabel(desc)
+        sub.setObjectName("muted")
+        sub.setWordWrap(True)
+        sub.setAlignment(Qt.AlignCenter)
+        f = sub.font()
         f.setPointSize(10)
-        text.setFont(f)
+        sub.setFont(f)
+        sub.setMaximumWidth(200)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(4)
         lay.addWidget(pic)
-        lay.addWidget(text)
-
-        self._update_style()
+        lay.addWidget(title)
+        lay.addWidget(sub)
 
     def value(self) -> str:
         return self._value
 
+    def set_image(self, image_path) -> None:
+        pix = QPixmap(str(image_path)) if image_path is not None else QPixmap()
+        if not pix.isNull():
+            self._pic.setText("")
+            self._pic.setPixmap(
+                pix.scaled(200, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        else:
+            self._pic.setPixmap(QPixmap())
+            self._pic.setText("(no preview)")
+
     def set_selected(self, on: bool) -> None:
-        self._selected = on
-        self._update_style()
+        self.setProperty("selected", on)
+        # Re-polish so the [selected="true"] stylesheet rule takes effect.
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def mousePressEvent(self, event):  # noqa: N802 - Qt override
         if event.button() == Qt.LeftButton:
             self.parent().select(self._value)
         super().mousePressEvent(event)
-
-    def _update_style(self) -> None:
-        if self._selected:
-            self.setStyleSheet(
-                "#themeCard{background:#3b82f6;border-radius:8px;}"
-                "QLabel{color:#ffffff;}"
-            )
-        else:
-            self.setStyleSheet(
-                "#themeCard{background:rgba(255,255,255,16);border-radius:8px;}"
-                "QLabel{color:#e5e7eb;}"
-            )
 
 
 class _ThemePicker(QWidget):
@@ -255,21 +324,31 @@ class _ThemePicker(QWidget):
 
     selection_changed = Signal(str)
 
-    def __init__(self, themes, parent=None) -> None:
+    def __init__(self, themes, expanded: bool = False, parent=None) -> None:
         super().__init__(parent)
         self._cards: dict[str, _ThemeCard] = {}
         self._value = themes[0][0] if themes else ""
+        self._expanded = bool(expanded)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
-        for value, label in themes:
-            image_path = theme_preview_path(value)
-            card = _ThemeCard(value, label, image_path)
+        for value, name, desc in themes:
+            image_path = theme_preview_path(value, self._expanded)
+            card = _ThemeCard(value, name, desc, image_path)
             self._cards[value] = card
             lay.addWidget(card)
         lay.addStretch(1)
         self.select(self._value)
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Swap card images to the variant matching the expand-windows toggle."""
+        expanded = bool(expanded)
+        if expanded == self._expanded:
+            return
+        self._expanded = expanded
+        for value, card in self._cards.items():
+            card.set_image(theme_preview_path(value, expanded))
 
     def select(self, value: str) -> None:
         if value not in self._cards:
@@ -284,41 +363,97 @@ class _ThemePicker(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Settings dialog (sidebar + stacked pages)
+# Settings dialog (sidebar + stacked pages of grouped cards)
 # ---------------------------------------------------------------------------
 
 
-class _Page(QFrame):
-    """A content page with a header and a list of rows."""
+class _Card(QFrame):
+    """A rounded group box holding settings rows with hairline separators."""
 
-    def __init__(self, title: str, parent=None) -> None:
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setObjectName("settingsPage")
-        self.setStyleSheet(
-            "#settingsPage{background:transparent;}"
-        )
+        self.setObjectName("card")
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(14, 2, 14, 2)
+        self._lay.setSpacing(0)
+        self._count = 0
+
+    def _maybe_separator(self) -> None:
+        if self._count:
+            sep = QFrame()
+            sep.setObjectName("separator")
+            sep.setFixedHeight(1)
+            self._lay.addWidget(sep)
+
+    def add_row(self, label: str, widget: QWidget) -> None:
+        """Label on the left, control right-aligned — macOS settings style."""
+        self._maybe_separator()
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 9, 0, 9)
+        row.addWidget(QLabel(label))
+        row.addStretch(1)
+        row.addWidget(widget)
+        self._lay.addLayout(row)
+        self._count += 1
+
+    def add_full(self, widget: QWidget) -> None:
+        """A row spanning the card's full width (e.g. the theme picker)."""
+        self._maybe_separator()
+        row = QVBoxLayout()
+        row.setContentsMargins(0, 10, 0, 10)
+        row.addWidget(widget)
+        self._lay.addLayout(row)
+        self._count += 1
+
+
+class _Page(QWidget):
+    """A content page: title, optional subtitle, then grouped cards."""
+
+    def __init__(self, title: str, subtitle: str | None = None, parent=None) -> None:
+        super().__init__(parent)
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(26, 22, 26, 22)
+        self._lay.setSpacing(10)
+
         header = QLabel(title)
         f = header.font()
         f.setPointSize(15)
         f.setBold(True)
         header.setFont(f)
+        self._lay.addWidget(header)
 
-        self._rows = QVBoxLayout(self)
-        self._rows.setContentsMargins(18, 12, 18, 18)
-        self._rows.setSpacing(14)
-        self._rows.addWidget(header)
+        if subtitle:
+            sub = QLabel(subtitle)
+            sub.setObjectName("muted")
+            sub.setWordWrap(True)
+            self._lay.addWidget(sub)
+
+        self._card: _Card | None = None
+
+    def card(self) -> _Card:
+        if self._card is None:
+            self._card = _Card()
+            self._lay.addWidget(self._card)
+        return self._card
+
+    def new_card(self) -> None:
+        """Close the current group; the next row starts a fresh card."""
+        self._card = None
 
     def add_row(self, label: str, widget: QWidget) -> None:
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        lbl = QLabel(label)
-        lbl.setMinimumWidth(190)
-        row.addWidget(lbl, alignment=Qt.AlignTop | Qt.AlignLeft)
-        row.addWidget(widget, stretch=1)
-        self._rows.addLayout(row)
+        self.card().add_row(label, widget)
+
+    def add_full(self, widget: QWidget) -> None:
+        self.card().add_full(widget)
+
+    def add_widget(self, widget: QWidget, center: bool = False) -> None:
+        if center:
+            self._lay.addWidget(widget, alignment=Qt.AlignHCenter)
+        else:
+            self._lay.addWidget(widget)
 
     def add_stretch(self) -> None:
-        self._rows.addStretch(1)
+        self._lay.addStretch(1)
 
 
 class SettingsDialog(QDialog):
@@ -330,66 +465,70 @@ class SettingsDialog(QDialog):
         self.setModal(True)
         self._config = config
         self._launch_at_login_init = self._is_launch_at_login()
+        tokens = _Tokens()
 
         # ---- General page ----
         general = _Page("General")
 
-        self._launch_at_login = QCheckBox("Launch Kage at login")
+        self._launch_at_login = QCheckBox()
         self._launch_at_login.setChecked(self._launch_at_login_init)
-        general.add_row("", self._launch_at_login)
+        general.add_row("Launch Kage at login", self._launch_at_login)
 
         self._screen_preference = QComboBox()
         for value, label in _SCREEN_PREFERENCES:
             self._screen_preference.addItem(label, value)
         idx = self._screen_preference.findData(config.screen_preference)
         self._screen_preference.setCurrentIndex(idx if idx >= 0 else 0)
-        general.add_row("Open launcher/switcher on", self._screen_preference)
+        general.add_row("Open launcher and switcher on", self._screen_preference)
 
         self._max_results = QSpinBox()
         self._max_results.setRange(1, 100)
         self._max_results.setValue(config.palette.max_results)
-        general.add_row("Max palette results", self._max_results)
+        general.add_row("Maximum palette results", self._max_results)
 
-        self._windows_first = QCheckBox("Open windows ranked above unopened apps")
+        self._windows_first = QCheckBox()
         self._windows_first.setChecked(config.palette.windows_first)
-        general.add_row("", self._windows_first)
+        general.add_row(
+            "Rank open windows above unopened apps", self._windows_first
+        )
         general.add_stretch()
 
         # ---- Switcher page ----
-        switcher = _Page("Switcher")
+        switcher = _Page("Switcher", "Choose how the switcher looks and behaves.")
 
-        self._theme_picker = _ThemePicker(_SWITCHER_THEMES)
+        self._theme_picker = _ThemePicker(
+            _SWITCHER_THEMES, expanded=config.switcher.expand_windows
+        )
         self._theme_picker.select(config.switcher.theme)
-        switcher.add_row("Theme", self._theme_picker)
+        switcher.add_full(self._theme_picker)
 
-        self._expand_windows = QCheckBox(
-            "Show every window as its own entry in Alt+Tab"
-        )
+        self._expand_windows = QCheckBox()
         self._expand_windows.setChecked(config.switcher.expand_windows)
-        switcher.add_row("", self._expand_windows)
-
-        self._show_previews = QCheckBox(
-            "Show a live preview while switching"
+        self._expand_windows.toggled.connect(self._theme_picker.set_expanded)
+        switcher.add_row(
+            "Show every window as its own entry", self._expand_windows
         )
+
+        self._show_previews = QCheckBox()
         self._show_previews.setChecked(config.switcher.show_previews)
-        switcher.add_row("", self._show_previews)
+        switcher.add_row(
+            "Show a live preview while switching", self._show_previews
+        )
         switcher.add_stretch()
 
         # ---- Shortcuts page ----
-        shortcuts = _Page("Shortcuts")
-        hint = QLabel(
+        shortcuts = _Page(
+            "Shortcuts",
             "Click “Record…”, then press the key combo you want "
-            "(e.g. hold Option and tap Tab for Alt+Tab)."
+            "(e.g. hold Option and tap Tab for Alt+Tab).",
         )
-        hint.setWordWrap(True)
-        shortcuts._rows.addWidget(hint)
 
         launcher_row, self._launcher = _chord_row(config.hotkeys.launcher)
         app_switcher_row, self._app_switcher = _chord_row(config.hotkeys.app_switcher)
         window_switcher_row, self._window_switcher = _chord_row(
             config.hotkeys.window_switcher
         )
-        shortcuts.add_row("Launcher hotkey", launcher_row)
+        shortcuts.add_row("Launcher", launcher_row)
         shortcuts.add_row("App switcher (Alt+Tab style)", app_switcher_row)
         shortcuts.add_row("Window switcher (per-app)", window_switcher_row)
         shortcuts.add_stretch()
@@ -404,7 +543,7 @@ class SettingsDialog(QDialog):
                 pix.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
         logo_lbl.setAlignment(Qt.AlignCenter)
-        about._rows.addWidget(logo_lbl, alignment=Qt.AlignHCenter)
+        about.add_widget(logo_lbl, center=True)
 
         name_lbl = QLabel("Kage")
         f = name_lbl.font()
@@ -412,17 +551,17 @@ class SettingsDialog(QDialog):
         f.setBold(True)
         name_lbl.setFont(f)
         name_lbl.setAlignment(Qt.AlignCenter)
-        about._rows.addWidget(name_lbl)
+        about.add_widget(name_lbl)
 
         version_lbl = QLabel(f"Version {__version__}")
+        version_lbl.setObjectName("muted")
         version_lbl.setAlignment(Qt.AlignCenter)
-        version_lbl.setStyleSheet("color:#9ca3af;")
-        about._rows.addWidget(version_lbl)
+        about.add_widget(version_lbl)
 
         bundle_lbl = QLabel("dev.baddi.abhishek.Kage")
+        bundle_lbl.setObjectName("muted")
         bundle_lbl.setAlignment(Qt.AlignCenter)
-        bundle_lbl.setStyleSheet("color:#9ca3af;")
-        about._rows.addWidget(bundle_lbl)
+        about.add_widget(bundle_lbl)
         about.add_stretch()
 
         # ---- Sidebar + stack ----
@@ -433,11 +572,14 @@ class SettingsDialog(QDialog):
         self._stack.addWidget(about)
 
         self._sidebar = QListWidget()
-        self._sidebar.setFixedWidth(160)
-        self._sidebar.setCurrentRow(0)
+        self._sidebar.setObjectName("sidebar")
+        self._sidebar.setFixedWidth(185)
+        self._sidebar.setIconSize(QSize(20, 20))
+        self._sidebar.setFocusPolicy(Qt.NoFocus)
+        for title, glyph, color in _SECTIONS:
+            QListWidgetItem(_section_icon(glyph, color), title, self._sidebar)
         self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
-        for title in ("General", "Switcher", "Shortcuts", "About"):
-            QListWidgetItem(title, self._sidebar)
+        self._sidebar.setCurrentRow(0)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -445,26 +587,75 @@ class SettingsDialog(QDialog):
         body.addWidget(self._sidebar)
         body.addWidget(self._stack, stretch=1)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Save | QDialogButtonBox.Cancel
-        )
+        # ---- Footer (hairline + inset Save/Cancel) ----
+        footer_line = QFrame()
+        footer_line.setObjectName("separator")
+        footer_line.setFixedHeight(1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
+
+        footer = QWidget()
+        footer_lay = QHBoxLayout(footer)
+        footer_lay.setContentsMargins(16, 10, 16, 12)
+        footer_lay.addWidget(buttons)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addLayout(body)
-        layout.addWidget(buttons)
+        layout.addLayout(body, stretch=1)
+        layout.addWidget(footer_line)
+        layout.addWidget(footer)
 
-        # Keep the sidebar styling clean so the dialog feels native.
-        self._sidebar.setStyleSheet(
-            "QListWidget{background:#1f1f23;border:none;}"
-            "QListWidget::item{padding:10px 14px;}"
-            "QListWidget::item:selected{background:#3b82f6;color:#ffffff;}"
+        self.setStyleSheet(
+            f"""
+            #sidebar {{
+                background: {tokens.sidebar_bg};
+                border: none;
+                outline: 0;
+                padding: 8px 0;
+            }}
+            #sidebar::item {{
+                padding: 5px 8px;
+                margin: 1px 8px;
+                border-radius: 6px;
+            }}
+            #sidebar::item:selected {{
+                background: {tokens.accent};
+                color: #ffffff;
+            }}
+            #sidebar::item:hover:!selected {{
+                background: {tokens.hover};
+            }}
+            QFrame#card {{
+                background: {tokens.card_bg};
+                border: 1px solid {tokens.card_border};
+                border-radius: 10px;
+            }}
+            QFrame#separator {{
+                background: {tokens.separator};
+                border: none;
+            }}
+            QLabel#muted {{
+                color: {tokens.muted};
+            }}
+            QFrame#themeCard {{
+                background: {tokens.card_bg};
+                border: 2px solid transparent;
+                border-radius: 10px;
+            }}
+            QFrame#themeCard:hover {{
+                border-color: {tokens.hover_border};
+            }}
+            QFrame#themeCard[selected="true"],
+            QFrame#themeCard[selected="true"]:hover {{
+                border-color: {tokens.accent};
+            }}
+            """
         )
 
-        self.resize(720, 480)
+        self.resize(760, 520)
 
     @staticmethod
     def _is_launch_at_login() -> bool:

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QHBoxLayout,
     QLabel,
     QStackedLayout,
     QVBoxLayout,
@@ -41,6 +42,8 @@ class _AppEntry:
     # A representative window (e.g. the first one seen) used for the
     # preview thumbnail -- app entries aren't tied to one specific window.
     window_id: int | None = None
+    # How many windows the app has open; shown as a badge on the tile.
+    window_count: int = 0
 
 
 @dataclass
@@ -57,12 +60,39 @@ class _WindowEntry:
 # ---------------------------------------------------------------------------
 
 
+def _with_count_badge(pix: QPixmap, count: int) -> QPixmap:
+    """Return a copy of ``pix`` with a window-count badge in the top-right."""
+    if pix.isNull():
+        return pix
+    out = QPixmap(pix)
+    text = str(count) if count < 100 else "99+"
+    font = QFont()
+    font.setPixelSize(11)
+    font.setBold(True)
+    fm = QFontMetrics(font)
+    h = 18
+    w = max(h, fm.horizontalAdvance(text) + 10)
+    rect = QRect(out.width() - w - 3, 3, w, h)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(59, 130, 246, 235))
+    p.drawRoundedRect(rect, h / 2, h / 2)
+    p.setPen(QColor("#ffffff"))
+    p.setFont(font)
+    p.drawText(rect, Qt.AlignCenter, text)
+    p.end()
+    return out
+
+
 class _ItemWidget(QFrame):
     """A single tile; highlights when selected.
 
     Renders either a small app icon (default theme) or, when a window
-    screenshot is supplied, a larger preview thumbnail -- both with the
-    label underneath.
+    screenshot is supplied, a larger preview thumbnail. Preview tiles show
+    a small app icon before a middle-elided title; ``badge_count`` (used
+    for non-expanded app entries) overlays a window-count badge on the
+    image's top-right corner.
     """
 
     def __init__(
@@ -70,47 +100,80 @@ class _ItemWidget(QFrame):
         icon_path: str | None,
         label: str,
         preview: QPixmap | None = None,
+        badge_count: int | None = None,
     ) -> None:
         super().__init__()
         self._selected = False
         self.setObjectName("switcherItem")
+        has_preview = preview is not None and not preview.isNull()
 
         image_lbl = QLabel()
         image_lbl.setAlignment(Qt.AlignCenter)
-        if preview is not None and not preview.isNull():
+        if has_preview:
             image_size = (176, 110)
             image_lbl.setFixedSize(*image_size)
-            image_lbl.setPixmap(
-                preview.scaled(*image_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pix = preview.scaled(
+                *image_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
+            if badge_count:
+                pix = _with_count_badge(pix, badge_count)
+            image_lbl.setPixmap(pix)
             text_width = 176
         else:
             pix = QPixmap(icon_path) if icon_path else QPixmap()
             if not pix.isNull():
-                image_lbl.setPixmap(
-                    pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
+                pix = pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                if badge_count:
+                    pix = _with_count_badge(pix, badge_count)
+                image_lbl.setPixmap(pix)
             else:
                 image_lbl.setFixedSize(64, 64)
                 image_lbl.setText("▢")
             text_width = 96
 
-        text_lbl = QLabel(label)
-        text_lbl.setWordWrap(True)
-        text_lbl.setAlignment(Qt.AlignCenter)
         f = QFont()
         f.setPointSize(11)
-        text_lbl.setFont(f)
-        text_lbl.setMaximumWidth(text_width)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
         lay.addWidget(image_lbl)
-        lay.addWidget(text_lbl)
 
-        if preview is not None and not preview.isNull():
-            self.setFixedSize(196, 156)
+        if has_preview:
+            # [16px app icon] [middle-elided title], centered as one unit.
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0, 0, 0, 0)
+            title_row.setSpacing(4)
+            title_row.addStretch(1)
+
+            text_avail = text_width
+            icon_pix = QPixmap(icon_path) if icon_path else QPixmap()
+            if not icon_pix.isNull():
+                icon_lbl = QLabel()
+                icon_lbl.setPixmap(
+                    icon_pix.scaled(
+                        16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    )
+                )
+                title_row.addWidget(icon_lbl)
+                text_avail -= 20
+
+            text_lbl = QLabel(QFontMetrics(f).elidedText(label, Qt.ElideMiddle, text_avail))
+            text_lbl.setFont(f)
+            title_row.addWidget(text_lbl)
+            title_row.addStretch(1)
+            lay.addLayout(title_row)
+            self.setToolTip(label)
+        else:
+            text_lbl = QLabel(label)
+            text_lbl.setWordWrap(True)
+            text_lbl.setAlignment(Qt.AlignCenter)
+            text_lbl.setFont(f)
+            text_lbl.setMaximumWidth(text_width)
+            lay.addWidget(text_lbl)
+
+        if has_preview:
+            self.setFixedSize(196, 152)
         else:
             self.setFixedSize(108, 110)
         self._update_style()
@@ -316,7 +379,12 @@ class SwitcherOverlay(QWidget):
                 if wid is not None:
                     preview = self._tile_previews.get(wid)
             if isinstance(e, _AppEntry):
-                tile = _ItemWidget(e.icon_path, e.name, preview=preview)
+                tile = _ItemWidget(
+                    e.icon_path,
+                    e.name,
+                    preview=preview,
+                    badge_count=e.window_count or None,
+                )
             else:
                 tile = _ItemWidget(e.icon_path, e.title or e.app_name, preview=preview)
             tiles.append(tile)
@@ -468,14 +536,17 @@ class SwitcherController:
                     icon_path=icon,
                     bundle_id=w.bundle_id,
                     window_id=w.window_id,
+                    window_count=1,
                 )
                 representative_minimized[key] = w.is_minimized
-            elif representative_minimized.get(key) and not w.is_minimized:
-                # Prefer a visible window as the representative over a
-                # minimized one, so committing this entry raises something
-                # already on-screen rather than an arbitrary hidden window.
-                keys[key].window_id = w.window_id
-                representative_minimized[key] = False
+            else:
+                keys[key].window_count += 1
+                if representative_minimized.get(key) and not w.is_minimized:
+                    # Prefer a visible window as the representative over a
+                    # minimized one, so committing this entry raises something
+                    # already on-screen rather than an arbitrary hidden window.
+                    keys[key].window_id = w.window_id
+                    representative_minimized[key] = False
         all_keys = list(keys.values())
         ordered_keys = self._mru.order([e.key for e in all_keys])
         key_to_entry = {e.key: e for e in all_keys}
@@ -546,9 +617,9 @@ class SwitcherController:
         self.overlay.set_previews_enabled(show_previews and theme == "default")
 
         if self._mode == "apps":
-            # window_previews only makes sense against individual windows,
-            # not one tile per app -- force the flat list for this theme.
-            if expand or theme == "window_previews":
+            # Non-expanded window_previews shows one tile per app: the
+            # representative window's screenshot with a window-count badge.
+            if expand:
                 entries = self._flat_window_entries()
                 setter = self.overlay.set_windows
             else:
