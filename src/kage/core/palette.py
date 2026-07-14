@@ -61,7 +61,7 @@ class PaletteWindow(QWidget):
         layout.addWidget(self._field)
         layout.addWidget(self._list)
 
-        self._list.installEventFilter(self)
+        self._field.installEventFilter(self)
 
         self.hide()
 
@@ -102,7 +102,7 @@ class PaletteWindow(QWidget):
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
 
-        if obj is self._list and event.type() == QEvent.KeyPress:
+        if obj is self._field and event.type() == QEvent.KeyPress:
             key = event.key()
             if key == Qt.Key_Escape:
                 self.hide_palette()

@@ -197,10 +197,13 @@ class MacHotkeyProvider(HotkeyProvider):
                         self._switcher_bridge.commit.emit()
                     return event
                 if event_type == kCGEventKeyDown:
-                    if keycode == _TAB_KEYCODE:
+                    # Cycle on repeats of the chord's own key (e.g. `` ` ``
+                    # for Alt+`) as well as Tab, so Alt+Tab-style repeat
+                    # works for any switcher chord, not just literal Tab.
+                    if keycode in (active_hk.keycode, _TAB_KEYCODE):
                         reverse = bool(flags & SHIFT)
                         self._switcher_bridge.cycle.emit(reverse)
-                        return None  # suppress Tab
+                        return None  # suppress the cycle key
                     if keycode == _ESC_KEYCODE:
                         self._in_switcher = False
                         self._switcher_bridge.cancel.emit()

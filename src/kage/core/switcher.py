@@ -277,12 +277,12 @@ class SwitcherController:
         wins = self._wp.list_app_windows(bid)
         icon = self._ap.icon_for_bundle_id(bid)
         out: list[_WindowEntry] = []
-        seen: set[str] = set()
+        seen: set[int] = set()
         for w in wins:
-            title = w.window_title or w.app_name
-            if title in seen:
+            if w.window_id in seen:
                 continue
-            seen.add(title)
+            seen.add(w.window_id)
+            title = w.window_title or w.app_name
             out.append(
                 _WindowEntry(
                     window_id=w.window_id,

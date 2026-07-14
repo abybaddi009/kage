@@ -8,43 +8,72 @@ from __future__ import annotations
 
 from ...backends.base import WindowInfo, WindowProvider
 
+# Private CGWindowID <-> AXUIElement bridge. AX only exposes windows by
+# title/children order, which is ambiguous when two windows of the same app
+# share a title (or both have none) -- _AXUIElementGetWindow gives us the
+# real kCGWindowNumber for a given AXUIElement so activation can match on
+# identity instead of guessing from title text.
+_AX_GET_WINDOW = None
+_AX_GET_WINDOW_LOAD_FAILED = False
 
-def _import_quartz():
-    from Quartz import (  # type: ignore
-        CGWindowListCopyWindowInfo,
-        kCGWindowListOptionOnScreenOnly,
-        kCGNullWindowID,
-    )
-    return (
-        CGWindowListCopyWindowInfo,
-        kCGWindowListOptionOnScreenOnly,
-        kCGNullWindowID,
-    )
+
+def _ax_get_window_fn():
+    global _AX_GET_WINDOW, _AX_GET_WINDOW_LOAD_FAILED
+    if _AX_GET_WINDOW is not None or _AX_GET_WINDOW_LOAD_FAILED:
+        return _AX_GET_WINDOW
+    try:
+        import ctypes
+
+        lib = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+        fn = lib._AXUIElementGetWindow
+        fn.restype = ctypes.c_int32
+        fn.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        _AX_GET_WINDOW = fn
+    except Exception:
+        _AX_GET_WINDOW_LOAD_FAILED = True
+    return _AX_GET_WINDOW
+
+
+def _ax_attr(element, attribute):
+    """AXUIElementCopyAttributeValue wrapper.
+
+    This pyobjc binding surfaces the (AXError, value) out-param pair, so it
+    must be called with a placeholder third argument -- calling it as if it
+    returned the value directly raises TypeError, which prior code caught
+    and silently treated as "no value", making every AX call here a no-op.
+    """
+    from ApplicationServices import AXUIElementCopyAttributeValue  # type: ignore
+
+    err, value = AXUIElementCopyAttributeValue(element, attribute, None)
+    if err != 0:
+        return None
+    return value
+
+
+def _ax_cg_window_id(ax_ref) -> int | None:
+    """Resolve an AXUIElement window ref to its real CGWindowID, if possible."""
+    fn = _ax_get_window_fn()
+    if fn is None:
+        return None
+    try:
+        import ctypes
+        import objc
+
+        ptr = objc.pyobjc_id(ax_ref)
+        wid = ctypes.c_uint32(0)
+        err = fn(ctypes.c_void_p(ptr), ctypes.byref(wid))
+        if err == 0:
+            return int(wid.value)
+    except Exception:
+        pass
+    return None
 
 
 def _import_cocoa():
     from Cocoa import NSRunningApplication, NSWorkspace  # type: ignore
     return NSRunningApplication, NSWorkspace
-
-
-# pid -> (bundle id, app name) cache, refreshed on demand.
-_PID_CACHE: dict[int, tuple[str | None, str]] = {}
-
-
-def _pid_info(pid: int) -> tuple[str | None, str]:
-    if pid in _PID_CACHE:
-        return _PID_CACHE[pid]
-    NSRunningApplication, NSWorkspace = _import_cocoa()
-    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-    if app is None:
-        ws = NSWorkspace.sharedWorkspace()
-        info = ws.activeApplication()
-        name = str(info.get("NSApplicationName", "")) if info else ""
-        return (None, name)
-    bundle_id = str(app.bundleIdentifier()) if app.bundleIdentifier() else None
-    name = str(app.localizedName()) or bundle_id or "App"
-    _PID_CACHE[pid] = (bundle_id, name)
-    return (bundle_id, name)
 
 
 class MacWindowProvider(WindowProvider):
@@ -56,46 +85,29 @@ class MacWindowProvider(WindowProvider):
         self._ax_counter = 0
 
     def list_windows(self) -> list[WindowInfo]:
-        (
-            CGWindowListCopyWindowInfo,
-            kCGListOption,
-            kCGNull,
-        ) = _import_quartz()
-        windows = CGWindowListCopyWindowInfo(kCGListOption, kCGNull)
+        """Enumerate windows of every regular (Dock-visible) running app via AX.
+
+        CGWindowListCopyWindowInfo only reports windows the compositor is
+        actively drawing, which silently excludes minimized windows. AX's
+        per-app window list has no such restriction, so it's the source of
+        truth here; minimized windows come back with is_minimized=True.
+        """
+        try:
+            from AppKit import NSApplicationActivationPolicyRegular  # type: ignore
+        except ImportError:
+            return []
+        NSRunningApplication, NSWorkspace = _import_cocoa()
         out: list[WindowInfo] = []
-        if not windows:
-            return out
-        for w in windows:
+        for app in NSWorkspace.sharedWorkspace().runningApplications():
             try:
-                layer = int(w.get("kCGWindowLayer", 1))
-            except (TypeError, ValueError):
-                layer = 1
-            if layer != 0:
-                continue
-            owner = w.get("kCGWindowOwnerName")
-            pid = w.get("kCGWindowOwnerPID")
-            wid = w.get("kCGWindowNumber")
-            title = w.get("kCGWindowName")
-            if wid is None or pid is None:
-                continue
-            # Skip windows with no on-screen bounds (purely off-screen helpers).
-            bounds = w.get("kCGWindowBounds", {})
-            if isinstance(bounds, dict):
-                if not bounds.get("Width") or not bounds.get("Height"):
+                if app.activationPolicy() != NSApplicationActivationPolicyRegular:
                     continue
-            bundle_id, app_name = _pid_info(int(pid))
-            name = app_name or (str(owner) if owner else "App")
-            title_str = str(title) if title else ""
-            out.append(
-                WindowInfo(
-                    app_name=name,
-                    window_title=title_str,
-                    window_id=int(wid),
-                    bundle_id=bundle_id,
-                    pid=int(pid),
-                    is_minimized=False,
-                )
-            )
+            except Exception:
+                continue
+            pid = int(app.processIdentifier())
+            bundle_id = str(app.bundleIdentifier()) if app.bundleIdentifier() else None
+            name = str(app.localizedName()) if app.localizedName() else (bundle_id or "App")
+            out.extend(self._ax_windows(pid, app_name=name, bundle_id=bundle_id))
         return out
 
     def frontmost_bundle_id(self) -> str | None:
@@ -135,41 +147,56 @@ class MacWindowProvider(WindowProvider):
             pass
         return None
 
-    def _ax_windows(self, pid: int) -> list[WindowInfo]:
+    def _ax_windows(
+        self,
+        pid: int,
+        app_name: str | None = None,
+        bundle_id: str | None = None,
+    ) -> list[WindowInfo]:
         try:
             from ApplicationServices import (  # type: ignore
                 AXUIElementCreateApplication,
-                AXUIElementCopyAttributeValue,
                 kAXChildrenAttribute,
                 kAXTitleAttribute,
+                kAXRoleAttribute,
+                kAXMinimizedAttribute,
             )
         except ImportError:
             return []
         app_el = AXUIElementCreateApplication(pid)
-        try:
-            children = AXUIElementCopyAttributeValue(app_el, kAXChildrenAttribute)
-        except Exception:
-            children = None
+        children = _ax_attr(app_el, kAXChildrenAttribute)
         if not children:
             return []
+        if app_name is None or bundle_id is None:
+            NSRunningApplication, _ = _import_cocoa()
+            app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+            if app_name is None:
+                app_name = str(app.localizedName()) if app and app.localizedName() else "App"
+            if bundle_id is None:
+                bundle_id = (
+                    str(app.bundleIdentifier()) if app and app.bundleIdentifier() else None
+                )
         out: list[WindowInfo] = []
-        NSRunningApplication, _ = _import_cocoa()
-        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-        app_name = str(app.localizedName()) if app and app.localizedName() else "App"
-        bundle_id = (
-            str(app.bundleIdentifier()) if app and app.bundleIdentifier() else None
-        )
         n = children.count() if hasattr(children, "count") else 0
         for i in range(n):
             win = children.objectAtIndex_(i)
-            title = ""
-            try:
-                t = AXUIElementCopyAttributeValue(win, kAXTitleAttribute)
-                title = str(t) if t else ""
-            except Exception:
-                title = ""
-            self._ax_counter += 1
-            wid = self._ax_counter
+            # AX exposes non-window children too (menu bar, function row on
+            # Touch Bar Macs, etc.) -- only AXWindow entries are real windows.
+            if _ax_attr(win, kAXRoleAttribute) != "AXWindow":
+                continue
+            t = _ax_attr(win, kAXTitleAttribute)
+            title = str(t) if t else ""
+            minimized = bool(_ax_attr(win, kAXMinimizedAttribute))
+            # Prefer the real CGWindowID so ids stay stable/comparable with
+            # list_windows(); minimized windows may not resolve one, so fall
+            # back to a synthetic id (kept negative to avoid colliding with
+            # real CGWindowIDs) while still caching the AX ref for activation.
+            cg_id = _ax_cg_window_id(win)
+            if cg_id is None:
+                self._ax_counter += 1
+                wid = -self._ax_counter
+            else:
+                wid = cg_id
             self._ax_refs[wid] = win
             out.append(
                 WindowInfo(
@@ -178,6 +205,7 @@ class MacWindowProvider(WindowProvider):
                     window_id=wid,
                     bundle_id=bundle_id,
                     pid=pid,
+                    is_minimized=minimized,
                 )
             )
         return out
@@ -190,14 +218,22 @@ class MacWindowProvider(WindowProvider):
         # Find the window info to get pid + title, then raise via AX and app.
         for w in self.list_windows():
             if w.window_id == window_id:
-                return self._raise(pid=w.pid, title=w.window_title, bundle_id=w.bundle_id)
+                return self._raise(
+                    pid=w.pid,
+                    cg_window_id=w.window_id,
+                    title=w.window_title,
+                    bundle_id=w.bundle_id,
+                )
         return False
 
     def _ax_raise_ref(self, ref) -> bool:
         try:
-            from ApplicationServices import kAXRaiseAction  # type: ignore
+            from ApplicationServices import (  # type: ignore
+                AXUIElementPerformAction,
+                kAXRaiseAction,
+            )
 
-            ref.performAction_(kAXRaiseAction)
+            AXUIElementPerformAction(ref, kAXRaiseAction)
             pid = None
             try:
                 from ApplicationServices import (  # type: ignore
@@ -238,10 +274,12 @@ class MacWindowProvider(WindowProvider):
         except Exception:
             return False
 
-    def _raise(self, pid: int, title: str, bundle_id: str | None) -> bool:
+    def _raise(
+        self, pid: int, cg_window_id: int, title: str, bundle_id: str | None
+    ) -> bool:
         NSRunningApplication, _ = _import_cocoa()
         app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-        raised = self._ax_raise_window(pid, title)
+        raised = self._ax_raise_window(pid, cg_window_id, title)
         if app is not None:
             self._activate_app(app)
         if not raised and bundle_id:
@@ -264,13 +302,10 @@ class MacWindowProvider(WindowProvider):
             except Exception:
                 pass
 
-    def _ax_raise_window(self, pid: int, title: str) -> bool:
+    def _ax_raise_window(self, pid: int, cg_window_id: int, title: str) -> bool:
         try:
             from ApplicationServices import (  # type: ignore
                 AXUIElementCreateApplication,
-                AXUIElementCopyAttributeNames,
-                AXUIElementCopyAttributeValue,
-                AXUIElementCopyAttributeValues,
                 kAXChildrenAttribute,
                 kAXTitleAttribute,
                 kAXRaiseAction,
@@ -278,31 +313,35 @@ class MacWindowProvider(WindowProvider):
         except ImportError:
             return False
         app_el = AXUIElementCreateApplication(pid)
-        try:
-            children = AXUIElementCopyAttributeValue(app_el, kAXChildrenAttribute)
-        except Exception:
-            children = None
+        children = _ax_attr(app_el, kAXChildrenAttribute)
         if not children:
             return False
         # children is an NSArray of AXUIElements (windows).
         n = children.count() if hasattr(children, "count") else 0
-        best = None
+        # Prefer matching the real CGWindowID -- title text is ambiguous
+        # when two windows of the same app share a title (or both lack one),
+        # which otherwise always raises whichever window AX lists first.
+        by_id = None
+        title_fallback = None
         for i in range(n):
             win = children.objectAtIndex_(i)
-            try:
-                t = AXUIElementCopyAttributeValue(win, kAXTitleAttribute)
-            except Exception:
-                t = None
+            if _ax_cg_window_id(win) == cg_window_id:
+                by_id = win
+                break
+            t = _ax_attr(win, kAXTitleAttribute)
             tstr = str(t) if t else ""
             if tstr and (tstr == title or title in tstr or tstr in title):
-                best = win
-                break
-            if tstr and best is None:
-                best = win
+                if title_fallback is None:
+                    title_fallback = win
+            elif title_fallback is None and tstr:
+                title_fallback = win
+        best = by_id if by_id is not None else title_fallback
         if best is None:
             return False
         try:
-            best.performAction_(kAXRaiseAction)
+            from ApplicationServices import AXUIElementPerformAction  # type: ignore
+
+            AXUIElementPerformAction(best, kAXRaiseAction)
             return True
         except Exception:
             return False
