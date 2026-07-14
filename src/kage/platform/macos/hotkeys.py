@@ -57,9 +57,8 @@ class MacHotkeyProvider(HotkeyProvider):
         self._bridge = _HotkeyBridge()
         self._bridge.triggered.connect(self._dispatch)
 
-        # Switcher mode registration.
-        self._switcher_hk: Hotkey | None = None
-        self._switcher_handler: SwitcherHandler | None = None
+        # Switcher mode registration: chord -> (Hotkey, handler).
+        self._switcher_bindings: dict[str, tuple[Hotkey, SwitcherHandler]] = {}
         self._switcher_bridge = _SwitcherBridge()
         self._switcher_bridge.trigger.connect(self._on_switcher_trigger)
         self._switcher_bridge.cycle.connect(self._on_switcher_cycle)
@@ -68,6 +67,8 @@ class MacHotkeyProvider(HotkeyProvider):
 
         # State machine, only touched from the tap thread.
         self._in_switcher = False
+        # The (Hotkey, handler) pair for the active switcher session.
+        self._active_switcher: tuple[Hotkey, SwitcherHandler] | None = None
 
         self._thread: threading.Thread | None = None
         self._rl = None
@@ -80,15 +81,15 @@ class MacHotkeyProvider(HotkeyProvider):
         self._callbacks[hk.chord] = callback
 
     def register_switcher(self, chord: str, handler: SwitcherHandler) -> None:
-        self._switcher_hk = parse_chord(chord)
-        self._switcher_handler = handler
+        hk = parse_chord(chord)
+        self._switcher_bindings[hk.chord] = (hk, handler)
 
     def unregister(self, chord: str) -> None:
         self._bindings.pop(chord, None)
         self._callbacks.pop(chord, None)
-        if self._switcher_hk is not None and self._switcher_hk.chord == chord:
-            self._switcher_hk = None
-            self._switcher_handler = None
+        self._switcher_bindings.pop(chord, None)
+        if self._active_switcher is not None and self._active_switcher[0].chord == chord:
+            self._active_switcher = None
             self._in_switcher = False
 
     def start(self) -> None:
@@ -121,32 +122,34 @@ class MacHotkeyProvider(HotkeyProvider):
                 pass
 
     def _on_switcher_trigger(self) -> None:
-        if self._switcher_handler is not None:
+        if self._active_switcher is not None:
             try:
-                self._switcher_handler.on_trigger()
+                self._active_switcher[1].on_trigger()
             except Exception:
                 pass
 
     def _on_switcher_cycle(self, reverse: bool) -> None:
-        if self._switcher_handler is not None:
+        if self._active_switcher is not None:
             try:
-                self._switcher_handler.on_cycle(reverse)
+                self._active_switcher[1].on_cycle(reverse)
             except Exception:
                 pass
 
     def _on_switcher_commit(self) -> None:
-        if self._switcher_handler is not None:
+        if self._active_switcher is not None:
             try:
-                self._switcher_handler.on_commit()
+                self._active_switcher[1].on_commit()
             except Exception:
                 pass
+        self._active_switcher = None
 
     def _on_switcher_cancel(self) -> None:
-        if self._switcher_handler is not None:
+        if self._active_switcher is not None:
             try:
-                self._switcher_handler.on_cancel()
+                self._active_switcher[1].on_cancel()
             except Exception:
                 pass
+        self._active_switcher = None
 
     # ---- event tap ----
 
@@ -185,12 +188,11 @@ class MacHotkeyProvider(HotkeyProvider):
                 return event
 
             # --- Switcher mode: we're already cycling. ---
-            if self._in_switcher:
+            if self._in_switcher and self._active_switcher is not None:
+                active_hk = self._active_switcher[0]
                 if event_type == kCGEventFlagsChanged:
                     # Modifier released? Commit if any required modifier dropped.
-                    if self._switcher_hk is not None and (
-                        flags & self._switcher_hk.flags != self._switcher_hk.flags
-                    ):
+                    if flags & active_hk.flags != active_hk.flags:
                         self._in_switcher = False
                         self._switcher_bridge.commit.emit()
                     return event
@@ -222,16 +224,20 @@ class MacHotkeyProvider(HotkeyProvider):
                 self._bridge.triggered.emit(chord)
                 return None  # suppress
 
-            # Switcher chord -> enter switcher mode.
-            if self._switcher_hk is not None and keycode == self._switcher_hk.keycode:
-                hk = self._switcher_hk
-                if flags & hk.flags == hk.flags:
-                    # Allow Shift as an extra modifier (Shift+Tab cycles back).
-                    extra = (flags & _KNOWN_MODS) & ~hk.flags & ~SHIFT
-                    if not extra:
-                        self._in_switcher = True
-                        self._switcher_bridge.trigger.emit()
-                        return None  # suppress the initial Tab
+            # Switcher chords -> enter switcher mode with the matched binding.
+            for hk, handler in self._switcher_bindings.values():
+                if keycode != hk.keycode:
+                    continue
+                if flags & hk.flags != hk.flags:
+                    continue
+                # Allow Shift as an extra modifier (Shift+Tab cycles back).
+                extra = (flags & _KNOWN_MODS) & ~hk.flags & ~SHIFT
+                if extra:
+                    continue
+                self._in_switcher = True
+                self._active_switcher = (hk, handler)
+                self._switcher_bridge.trigger.emit()
+                return None  # suppress the initial key
             return event
 
         self._port = CGEventTapCreate(

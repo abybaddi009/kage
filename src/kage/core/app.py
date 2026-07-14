@@ -146,6 +146,15 @@ class KageApp(QObject):
             self.config.hotkeys.app_switcher, self._app_switcher
         )
 
+        # Alt+` per-app window switcher overlay (reuses the same UI filtered
+        # to the frontmost app's windows via AXUIElement).
+        self._window_switcher = SwitcherController(
+            self._window_provider, self._app_provider, self._mru, mode="windows"
+        )
+        self._hotkey_provider.register_switcher(
+            self.config.hotkeys.window_switcher, self._window_switcher
+        )
+
         # Register the launcher hotkey.
         self._hotkey_provider.register(
             self.config.hotkeys.launcher, self._palette.show_palette
@@ -202,6 +211,14 @@ class KageApp(QObject):
                     pass
                 self._hotkey_provider.register_switcher(
                     self.config.hotkeys.app_switcher, self._app_switcher
+                )
+            if self.config.hotkeys.window_switcher != old_win and self._window_switcher is not None:
+                try:
+                    self._hotkey_provider.unregister(old_win)
+                except Exception:
+                    pass
+                self._hotkey_provider.register_switcher(
+                    self.config.hotkeys.window_switcher, self._window_switcher
                 )
         self._palette.config = self.config if self._palette else None
         self.config_changed.emit()

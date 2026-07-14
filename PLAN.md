@@ -73,9 +73,9 @@ Status: ☐ todo · ◐ in progress · ☑ done
 - ☐ Verify against fullscreen apps and multiple displays
 
 ### Phase 3 — Tilde+Tab window switcher
-- ☐ Resolve Open Question on the exact chord
-- ☐ Per-app window enumeration via AXUIElement (CGWindowList alone can't raise a specific window)
-- ☐ Reuse switcher overlay filtered to the active app's windows
+- ☑ Resolve Open Question on the exact chord
+- ☑ Per-app window enumeration via AXUIElement (CGWindowList alone can't raise a specific window)
+- ☑ Reuse switcher overlay filtered to the active app's windows
 
 ### Phase 4 — Polish & extensibility
 - ☐ Settings UI from tray (edit bindings, launcher scope)
@@ -90,6 +90,6 @@ Status: ☐ todo · ◐ in progress · ☑ done
 
 ## Open questions
 
-1. **Tilde+Tab semantics** — literal backtick+Tab as a chord is unusual and conflicts with typing; propose Alt+`` ` `` (cycle windows of current app, matching macOS convention) unless a true `` ` ``+Tab chord is intended.
+1. ~~**Tilde+Tab semantics** — literal backtick+Tab as a chord is unusual and conflicts with typing; propose Alt+`` ` `` (cycle windows of current app, matching macOS convention) unless a true `` ` ``+Tab chord is intended.~~ **Resolved:** Alt+`` ` `` adopted (matches macOS convention); window_switcher hotkey enumerates the frontmost app's windows via AXUIElement and raises the selected window with kAXRaiseAction.
 2. Should the launcher also index files/folders or stay apps+windows only for MVP? (Assume apps+windows only.)
 3. Switcher scope: current desktop/Space only, or all Spaces? (Assume all, minus minimized indicated differently.)
