@@ -4,6 +4,10 @@ Saves to ``config.toml`` and signals the app to reload. Hotkey bindings are
 captured by recording an actual key press (via :class:`ChordCaptureEdit`)
 rather than typed as free text, so the resulting chord string always matches
 what ``parse_chord`` expects.
+
+The dialog uses a macOS System Settings-style sidebar (section list) with a
+stacked content pane on the right. "Launch at login" lives in the General
+section; the switcher theme is picked from image cards.
 """
 
 from __future__ import annotations
@@ -11,23 +15,29 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from .. import __version__
 from .config import Config, save_config
+from .paths import logo_path, theme_preview_path
 
 # (config value, display label) -- keep in sync with SWITCHER_THEMES in config.py.
 _SWITCHER_THEMES = [
@@ -171,6 +181,146 @@ def _chord_row(initial: str) -> tuple[QWidget, ChordCaptureEdit]:
     return row, edit
 
 
+# ---------------------------------------------------------------------------
+# Theme picker (image cards)
+# ---------------------------------------------------------------------------
+
+
+class _ThemeCard(QFrame):
+    """A clickable preview card for one switcher theme."""
+
+    def __init__(self, value: str, label: str, image_path) -> None:
+        super().__init__()
+        self._value = value
+        self._selected = False
+        self.setObjectName("themeCard")
+        self.setCursor(Qt.PointingHandCursor)
+
+        pic = QLabel()
+        pic.setAlignment(Qt.AlignCenter)
+        pix = QPixmap(str(image_path)) if image_path is not None else QPixmap()
+        if not pix.isNull():
+            pic.setPixmap(
+                pix.scaled(
+                    260, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+            )
+        else:
+            pic.setFixedSize(260, 150)
+            pic.setText("(no preview)")
+            pic.setStyleSheet("color:#9ca3af;")
+
+        text = QLabel(label)
+        text.setWordWrap(True)
+        text.setAlignment(Qt.AlignCenter)
+        f = text.font()
+        f.setPointSize(10)
+        text.setFont(f)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(4)
+        lay.addWidget(pic)
+        lay.addWidget(text)
+
+        self._update_style()
+
+    def value(self) -> str:
+        return self._value
+
+    def set_selected(self, on: bool) -> None:
+        self._selected = on
+        self._update_style()
+
+    def mousePressEvent(self, event):  # noqa: N802 - Qt override
+        if event.button() == Qt.LeftButton:
+            self.parent().select(self._value)
+        super().mousePressEvent(event)
+
+    def _update_style(self) -> None:
+        if self._selected:
+            self.setStyleSheet(
+                "#themeCard{background:#3b82f6;border-radius:8px;}"
+                "QLabel{color:#ffffff;}"
+            )
+        else:
+            self.setStyleSheet(
+                "#themeCard{background:rgba(255,255,255,16);border-radius:8px;}"
+                "QLabel{color:#e5e7eb;}"
+            )
+
+
+class _ThemePicker(QWidget):
+    """A horizontal row of theme cards; tracks the selected one."""
+
+    selection_changed = Signal(str)
+
+    def __init__(self, themes, parent=None) -> None:
+        super().__init__(parent)
+        self._cards: dict[str, _ThemeCard] = {}
+        self._value = themes[0][0] if themes else ""
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+        for value, label in themes:
+            image_path = theme_preview_path(value)
+            card = _ThemeCard(value, label, image_path)
+            self._cards[value] = card
+            lay.addWidget(card)
+        lay.addStretch(1)
+        self.select(self._value)
+
+    def select(self, value: str) -> None:
+        if value not in self._cards:
+            return
+        self._value = value
+        for v, card in self._cards.items():
+            card.set_selected(v == value)
+        self.selection_changed.emit(value)
+
+    def value(self) -> str:
+        return self._value
+
+
+# ---------------------------------------------------------------------------
+# Settings dialog (sidebar + stacked pages)
+# ---------------------------------------------------------------------------
+
+
+class _Page(QFrame):
+    """A content page with a header and a list of rows."""
+
+    def __init__(self, title: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("settingsPage")
+        self.setStyleSheet(
+            "#settingsPage{background:transparent;}"
+        )
+        header = QLabel(title)
+        f = header.font()
+        f.setPointSize(15)
+        f.setBold(True)
+        header.setFont(f)
+
+        self._rows = QVBoxLayout(self)
+        self._rows.setContentsMargins(18, 12, 18, 18)
+        self._rows.setSpacing(14)
+        self._rows.addWidget(header)
+
+    def add_row(self, label: str, widget: QWidget) -> None:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel(label)
+        lbl.setMinimumWidth(190)
+        row.addWidget(lbl, alignment=Qt.AlignTop | Qt.AlignLeft)
+        row.addWidget(widget, stretch=1)
+        self._rows.addLayout(row)
+
+    def add_stretch(self) -> None:
+        self._rows.addStretch(1)
+
+
 class SettingsDialog(QDialog):
     reloaded = Signal()
 
@@ -179,58 +329,121 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Kage Settings")
         self.setModal(True)
         self._config = config
+        self._launch_at_login_init = self._is_launch_at_login()
 
-        form = QFormLayout()
+        # ---- General page ----
+        general = _Page("General")
 
-        hint = QLabel(
-            "Click “Record…”, then press the key combo you want "
-            "(e.g. hold Option and tap Tab for Alt+Tab)."
-        )
-        hint.setWordWrap(True)
-
-        launcher_row, self._launcher = _chord_row(config.hotkeys.launcher)
-        app_switcher_row, self._app_switcher = _chord_row(config.hotkeys.app_switcher)
-        window_switcher_row, self._window_switcher = _chord_row(
-            config.hotkeys.window_switcher
-        )
-        form.addRow("Launcher hotkey", launcher_row)
-        form.addRow("App switcher (Alt+Tab style)", app_switcher_row)
-        form.addRow("Window switcher (per-app)", window_switcher_row)
-
-        self._max_results = QSpinBox()
-        self._max_results.setRange(1, 100)
-        self._max_results.setValue(config.palette.max_results)
-        form.addRow("Max palette results", self._max_results)
-
-        self._windows_first = QCheckBox("Open windows ranked above unopened apps")
-        self._windows_first.setChecked(config.palette.windows_first)
-        form.addRow("", self._windows_first)
-
-        self._expand_windows = QCheckBox(
-            "Show every window as its own entry in Alt+Tab"
-        )
-        self._expand_windows.setChecked(config.switcher.expand_windows)
-        form.addRow("", self._expand_windows)
-
-        self._show_previews = QCheckBox(
-            "Show a live preview while switching"
-        )
-        self._show_previews.setChecked(config.switcher.show_previews)
-        form.addRow("", self._show_previews)
-
-        self._theme = QComboBox()
-        for value, label in _SWITCHER_THEMES:
-            self._theme.addItem(label, value)
-        idx = self._theme.findData(config.switcher.theme)
-        self._theme.setCurrentIndex(idx if idx >= 0 else 0)
-        form.addRow("Switcher theme", self._theme)
+        self._launch_at_login = QCheckBox("Launch Kage at login")
+        self._launch_at_login.setChecked(self._launch_at_login_init)
+        general.add_row("", self._launch_at_login)
 
         self._screen_preference = QComboBox()
         for value, label in _SCREEN_PREFERENCES:
             self._screen_preference.addItem(label, value)
         idx = self._screen_preference.findData(config.screen_preference)
         self._screen_preference.setCurrentIndex(idx if idx >= 0 else 0)
-        form.addRow("Open launcher/switcher on", self._screen_preference)
+        general.add_row("Open launcher/switcher on", self._screen_preference)
+
+        self._max_results = QSpinBox()
+        self._max_results.setRange(1, 100)
+        self._max_results.setValue(config.palette.max_results)
+        general.add_row("Max palette results", self._max_results)
+
+        self._windows_first = QCheckBox("Open windows ranked above unopened apps")
+        self._windows_first.setChecked(config.palette.windows_first)
+        general.add_row("", self._windows_first)
+        general.add_stretch()
+
+        # ---- Switcher page ----
+        switcher = _Page("Switcher")
+
+        self._theme_picker = _ThemePicker(_SWITCHER_THEMES)
+        self._theme_picker.select(config.switcher.theme)
+        switcher.add_row("Theme", self._theme_picker)
+
+        self._expand_windows = QCheckBox(
+            "Show every window as its own entry in Alt+Tab"
+        )
+        self._expand_windows.setChecked(config.switcher.expand_windows)
+        switcher.add_row("", self._expand_windows)
+
+        self._show_previews = QCheckBox(
+            "Show a live preview while switching"
+        )
+        self._show_previews.setChecked(config.switcher.show_previews)
+        switcher.add_row("", self._show_previews)
+        switcher.add_stretch()
+
+        # ---- Shortcuts page ----
+        shortcuts = _Page("Shortcuts")
+        hint = QLabel(
+            "Click “Record…”, then press the key combo you want "
+            "(e.g. hold Option and tap Tab for Alt+Tab)."
+        )
+        hint.setWordWrap(True)
+        shortcuts._rows.addWidget(hint)
+
+        launcher_row, self._launcher = _chord_row(config.hotkeys.launcher)
+        app_switcher_row, self._app_switcher = _chord_row(config.hotkeys.app_switcher)
+        window_switcher_row, self._window_switcher = _chord_row(
+            config.hotkeys.window_switcher
+        )
+        shortcuts.add_row("Launcher hotkey", launcher_row)
+        shortcuts.add_row("App switcher (Alt+Tab style)", app_switcher_row)
+        shortcuts.add_row("Window switcher (per-app)", window_switcher_row)
+        shortcuts.add_stretch()
+
+        # ---- About page ----
+        about = _Page("About")
+        logo_lbl = QLabel()
+        logo = logo_path()
+        pix = QPixmap(str(logo)) if logo is not None else QPixmap()
+        if not pix.isNull():
+            logo_lbl.setPixmap(
+                pix.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        logo_lbl.setAlignment(Qt.AlignCenter)
+        about._rows.addWidget(logo_lbl, alignment=Qt.AlignHCenter)
+
+        name_lbl = QLabel("Kage")
+        f = name_lbl.font()
+        f.setPointSize(18)
+        f.setBold(True)
+        name_lbl.setFont(f)
+        name_lbl.setAlignment(Qt.AlignCenter)
+        about._rows.addWidget(name_lbl)
+
+        version_lbl = QLabel(f"Version {__version__}")
+        version_lbl.setAlignment(Qt.AlignCenter)
+        version_lbl.setStyleSheet("color:#9ca3af;")
+        about._rows.addWidget(version_lbl)
+
+        bundle_lbl = QLabel("dev.baddi.abhishek.Kage")
+        bundle_lbl.setAlignment(Qt.AlignCenter)
+        bundle_lbl.setStyleSheet("color:#9ca3af;")
+        about._rows.addWidget(bundle_lbl)
+        about.add_stretch()
+
+        # ---- Sidebar + stack ----
+        self._stack = QStackedWidget()
+        self._stack.addWidget(general)
+        self._stack.addWidget(switcher)
+        self._stack.addWidget(shortcuts)
+        self._stack.addWidget(about)
+
+        self._sidebar = QListWidget()
+        self._sidebar.setFixedWidth(160)
+        self._sidebar.setCurrentRow(0)
+        self._sidebar.currentRowChanged.connect(self._stack.setCurrentIndex)
+        for title in ("General", "Switcher", "Shortcuts", "About"):
+            QListWidgetItem(title, self._sidebar)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._sidebar)
+        body.addWidget(self._stack, stretch=1)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
@@ -239,9 +452,30 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(hint)
-        layout.addLayout(form)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addLayout(body)
         layout.addWidget(buttons)
+
+        # Keep the sidebar styling clean so the dialog feels native.
+        self._sidebar.setStyleSheet(
+            "QListWidget{background:#1f1f23;border:none;}"
+            "QListWidget::item{padding:10px 14px;}"
+            "QListWidget::item:selected{background:#3b82f6;color:#ffffff;}"
+        )
+
+        self.resize(720, 480)
+
+    @staticmethod
+    def _is_launch_at_login() -> bool:
+        if sys.platform != "darwin":
+            return False
+        try:
+            from ..platform.macos import launch_at_login
+
+            return launch_at_login.is_launch_at_login()
+        except Exception:
+            return False
 
     def _on_save(self) -> None:
         cfg = self._config
@@ -252,12 +486,27 @@ class SettingsDialog(QDialog):
         cfg.palette.windows_first = self._windows_first.isChecked()
         cfg.switcher.expand_windows = self._expand_windows.isChecked()
         cfg.switcher.show_previews = self._show_previews.isChecked()
-        cfg.switcher.theme = self._theme.currentData()
+        cfg.switcher.theme = self._theme_picker.value()
         cfg.screen_preference = self._screen_preference.currentData()
         try:
             save_config(cfg)
         except Exception as exc:  # pragma: no cover - filesystem error
             QMessageBox.warning(self, "Kage", f"Could not save config:\n{exc}")
             return
+
+        if self._launch_at_login.isChecked() != self._launch_at_login_init:
+            self._apply_launch_at_login(self._launch_at_login.isChecked())
+
         self.accept()
         self.reloaded.emit()
+
+    @staticmethod
+    def _apply_launch_at_login(enabled: bool) -> None:
+        if sys.platform != "darwin":
+            return
+        try:
+            from ..platform.macos import launch_at_login
+
+            launch_at_login.set_launch_at_login(enabled)
+        except Exception:
+            pass

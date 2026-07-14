@@ -1,6 +1,6 @@
 """System tray icon for Kage.
 
-Menu: Settings (placeholder), Reload config, Quit.
+Menu: About, Settings, Reload config, Quit.
 """
 
 from __future__ import annotations
@@ -11,9 +11,20 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
 def _make_icon() -> QIcon:
-    """A simple placeholder icon so the tray works without bundled assets."""
+    """The Kage tray icon, loaded from the bundled logo when available.
+
+    Falls back to a drawn placeholder when the logo asset is missing
+    (e.g. running from a checkout without the assets installed).
+    """
+    from .paths import logo_path
+
+    logo = logo_path()
+    if logo is not None:
+        icon = QIcon(str(logo))
+        if not icon.isNull():
+            return icon
+    # Placeholder fallback.
     pix = QPixmap(32, 32)
-    pix.fill()
     from PySide6.QtGui import QColor, QPainter
 
     pix.fill(QColor(0, 0, 0, 0))
@@ -32,10 +43,10 @@ def _make_icon() -> QIcon:
 
 
 class TrayController(QObject):
+    about_clicked = Signal()
     settings_clicked = Signal()
     reload_clicked = Signal()
     quit_clicked = Signal()
-    launch_at_login_toggled = Signal(bool)
 
     def __init__(self, app: QApplication) -> None:
         super().__init__()
@@ -47,32 +58,27 @@ class TrayController(QObject):
     def _build_menu(self) -> None:
         menu = QMenu()
 
+        act_about = QAction("About Kage", menu)
+        act_about.triggered.connect(self.about_clicked.emit)
+        menu.addAction(act_about)
+
+        menu.addSeparator()
+
         act_settings = QAction("Settings…", menu)
         act_settings.triggered.connect(self.settings_clicked.emit)
         menu.addAction(act_settings)
 
-        self._act_login = QAction("Launch at login", menu)
-        self._act_login.setCheckable(True)
-        self._act_login.toggled.connect(self.launch_at_login_toggled.emit)
-        menu.addAction(self._act_login)
-
-        menu.addSeparator()
-
         act_reload = QAction("Reload config", menu)
         act_reload.triggered.connect(self.reload_clicked.emit)
         menu.addAction(act_reload)
+
+        menu.addSeparator()
 
         act_quit = QAction("Quit Kage", menu)
         act_quit.triggered.connect(self.quit_clicked.emit)
         menu.addAction(act_quit)
 
         self._tray.setContextMenu(menu)
-
-    def set_launch_at_login_checked(self, on: bool) -> None:
-        # Block signals to avoid a feedback loop when reflecting platform state.
-        self._act_login.blockSignals(True)
-        self._act_login.setChecked(on)
-        self._act_login.blockSignals(False)
 
     def show_message(self, title: str, body: str) -> None:
         self._tray.showMessage(title, body, QSystemTrayIcon.Information, 4000)

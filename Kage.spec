@@ -5,7 +5,11 @@ a = Analysis(
     ['src/kage/__main__.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('src/kage/assets/logo.png', 'kage/assets'),
+        ('src/kage/assets/default.png', 'kage/assets'),
+        ('src/kage/assets/thumbnails.png', 'kage/assets'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -47,5 +51,5 @@ app = BUNDLE(
     coll,
     name='Kage.app',
     icon='assets/logo.icns',
-    bundle_identifier='dev.abhishekbaddi.Kage',
+    bundle_identifier='dev.baddi.abhishek.Kage',
 )

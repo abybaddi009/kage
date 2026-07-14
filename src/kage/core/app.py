@@ -60,6 +60,13 @@ class KageApp(QObject):
         # Keep a hidden reference window so the app stays resident and can
         # present instant popups later (palette, switcher overlay).
         from PySide6.QtWidgets import QMainWindow
+        from PySide6.QtGui import QIcon
+
+        from .paths import logo_path
+
+        logo = logo_path()
+        if logo is not None:
+            self.qt_app.setWindowIcon(QIcon(str(logo)))
 
         self._hidden = QMainWindow()
         self._hidden.hide()
@@ -95,19 +102,16 @@ class KageApp(QObject):
         self._build_palette()
 
         self._tray = TrayController(self.qt_app)
+        self._tray.about_clicked.connect(self._on_about)
         self._tray.settings_clicked.connect(self._on_settings)
         self._tray.reload_clicked.connect(self._on_reload)
         self._tray.quit_clicked.connect(self.qt_app.quit)
-        self._tray.launch_at_login_toggled.connect(self._on_launch_at_login)
 
         if not QSystemTrayIcon_isAvailable():
             print(
                 "Warning: no system tray available; Kage will run headless.",
                 file=sys.stderr,
             )
-        else:
-            # Reflect current launch-at-login state into the tray checkbox.
-            self._sync_launch_at_login()
 
         return self.qt_app.exec()
 
@@ -199,33 +203,16 @@ class KageApp(QObject):
         dlg.reloaded.connect(self._on_reload)
         dlg.exec()
 
-    def _sync_launch_at_login(self) -> None:
-        if self._tray is None or sys.platform != "darwin":
-            return
-        try:
-            from ..platform.macos import launch_at_login
+    @Slot()
+    def _on_about(self) -> None:
+        from .settings import SettingsDialog
 
-            self._tray.set_launch_at_login_checked(launch_at_login.is_launch_at_login())
-        except Exception:
-            pass
-
-    @Slot(bool)
-    def _on_launch_at_login(self, enabled: bool) -> None:
-        if sys.platform != "darwin":
-            return
-        try:
-            from ..platform.macos import launch_at_login
-
-            ok = launch_at_login.set_launch_at_login(enabled)
-            self._tray.set_launch_at_login_checked(ok and enabled)
-            if not ok and self._tray is not None:
-                self._tray.show_message(
-                    "Kage",
-                    "Could not set launch-at-login. "
-                    "This works best when Kage is packaged as an app.",
-                )
-        except Exception:
-            pass
+        dlg = SettingsDialog(self.config, parent=self._hidden)
+        # Open on the About section.
+        about_index = 3
+        if hasattr(dlg, "_sidebar"):
+            dlg._sidebar.setCurrentRow(about_index)
+        dlg.exec()
 
     @Slot()
     def _on_reload(self) -> None:
