@@ -1,8 +1,12 @@
-"""macOS Accessibility permission detection and first-run prompt.
+"""macOS Accessibility and Screen Recording permission detection + first-run prompt.
 
 The CGEventTap (hotkeys / modifier-release) and AXUIElement (window activation)
-both require the process to be granted Accessibility permission in System
-Settings -> Privacy & Security -> Accessibility.
+both require Accessibility permission (System Settings -> Privacy & Security ->
+Accessibility). Separately, since macOS 10.15, reading window *titles* via
+CGWindowListCopyWindowInfo requires Screen Recording permission (System Settings
+-> Privacy & Security -> Screen Recording) -- without it, kCGWindowName comes
+back nil for every window owned by another process, even with Accessibility
+granted.
 """
 
 from __future__ import annotations
@@ -62,6 +66,54 @@ def open_system_settings() -> None:
     """Open System Settings -> Privacy & Security -> Accessibility."""
     # macOS 13+: use the x-apple-asset URL
     url = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+    try:
+        subprocess.Popen(["open", url])
+    except FileNotFoundError:
+        print(f"Open manually: {url}", file=sys.stderr)
+
+
+def screen_recording_trusted() -> bool:
+    """True if this process already has Screen Recording permission.
+
+    Needed to read window titles (kCGWindowName) for windows owned by other
+    processes; without it CGWindowListCopyWindowInfo returns nil titles.
+    """
+    try:
+        from Quartz import CGPreflightScreenCaptureAccess  # type: ignore
+    except ImportError:
+        return False
+    try:
+        return bool(CGPreflightScreenCaptureAccess())
+    except Exception:
+        return False
+
+
+def prompt_screen_recording() -> bool:
+    """Trigger the system Screen Recording prompt (non-blocking).
+
+    Returns True if already trusted. Otherwise the system shows its own
+    prompt; the user must toggle the switch and restart Kage (macOS does not
+    let an app self-refresh this grant without a relaunch).
+    """
+    try:
+        from Quartz import (  # type: ignore
+            CGPreflightScreenCaptureAccess,
+            CGRequestScreenCaptureAccess,
+        )
+    except ImportError:
+        return False
+    try:
+        if CGPreflightScreenCaptureAccess():
+            return True
+        CGRequestScreenCaptureAccess()
+        return False
+    except Exception:
+        return False
+
+
+def open_screen_recording_settings() -> None:
+    """Open System Settings -> Privacy & Security -> Screen Recording."""
+    url = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
     try:
         subprocess.Popen(["open", url])
     except FileNotFoundError:

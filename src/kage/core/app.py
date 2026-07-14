@@ -11,21 +11,16 @@ from .config import Config, load_config
 from .tray import TrayController
 
 
-class AccessibilityDialog(QDialog):
-    """First-run prompt guiding the user to grant Accessibility."""
+class PermissionDialog(QDialog):
+    """First-run prompt guiding the user to grant a required permission."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, title: str, message: str, open_settings, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Kage needs Accessibility")
+        self.setWindowTitle(title)
         self.setModal(True)
+        self._open_settings_cb = open_settings
 
-        msg = (
-            "Kage requires Accessibility permission to read the window list,\n"
-            "activate windows, and listen for hotkeys.\n\n"
-            "Open System Settings → Privacy & Security → Accessibility,\n"
-            "enable Kage (or your terminal), then restart Kage."
-        )
-        label = QLabel(msg)
+        label = QLabel(message)
         label.setWordWrap(True)
 
         open_btn = QPushButton("Open System Settings…")
@@ -41,9 +36,7 @@ class AccessibilityDialog(QDialog):
 
     @Slot()
     def _open_settings(self) -> None:
-        from ..platform.macos import accessibility
-
-        accessibility.open_system_settings()
+        self._open_settings_cb()
 
 
 class KageApp(QObject):
@@ -67,13 +60,32 @@ class KageApp(QObject):
         self._hidden = QMainWindow()
         self._hidden.hide()
 
-        # Accessibility check (macOS).
+        # Permission checks (macOS): Accessibility for hotkeys/activation,
+        # Screen Recording for window titles.
         if sys.platform == "darwin":
             from ..platform.macos import accessibility
 
             if not accessibility.is_trusted():
                 accessibility.prompt()
-                AccessibilityDialog().exec()
+                PermissionDialog(
+                    "Kage needs Accessibility",
+                    "Kage requires Accessibility permission to read the window list,\n"
+                    "activate windows, and listen for hotkeys.\n\n"
+                    "Open System Settings → Privacy & Security → Accessibility,\n"
+                    "enable Kage (or your terminal), then restart Kage.",
+                    accessibility.open_system_settings,
+                ).exec()
+
+            if not accessibility.screen_recording_trusted():
+                accessibility.prompt_screen_recording()
+                PermissionDialog(
+                    "Kage needs Screen Recording",
+                    "Kage requires Screen Recording permission to read window\n"
+                    "titles (macOS hides them from other apps otherwise).\n\n"
+                    "Open System Settings → Privacy & Security → Screen Recording,\n"
+                    "enable Kage (or your terminal), then restart Kage.",
+                    accessibility.open_screen_recording_settings,
+                ).exec()
 
         # Build the pre-built palette window (hidden until the hotkey fires).
         self._build_palette()
