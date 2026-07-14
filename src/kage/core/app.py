@@ -54,6 +54,10 @@ class KageApp(QObject):
         self.qt_app = qt_app
         self.config: Config = load_config()
         self._tray: TrayController | None = None
+        self._palette: PaletteWindow | None = None
+        self._window_provider = None
+        self._app_provider = None
+        self._hotkey_provider = None
 
     def start(self) -> int:
         # Keep a hidden reference window so the app stays resident and can
@@ -71,6 +75,9 @@ class KageApp(QObject):
                 accessibility.prompt()
                 AccessibilityDialog().exec()
 
+        # Build the pre-built palette window (hidden until the hotkey fires).
+        self._build_palette()
+
         self._tray = TrayController(self.qt_app)
         self._tray.settings_clicked.connect(self._on_settings)
         self._tray.reload_clicked.connect(self._on_reload)
@@ -84,6 +91,53 @@ class KageApp(QObject):
 
         return self.qt_app.exec()
 
+    def _build_palette(self) -> None:
+        from .palette import PaletteWindow
+
+        self._palette = PaletteWindow(self.config)
+
+        if sys.platform == "darwin":
+            from ..platform.macos.apps import MacAppProvider
+            from ..platform.macos.windows import MacWindowProvider
+            from ..platform.macos.hotkeys import MacHotkeyProvider
+
+            self._window_provider = MacWindowProvider()
+            self._app_provider = MacAppProvider()
+            self._hotkey_provider = MacHotkeyProvider()
+        else:
+            print(
+                f"Warning: no platform backends for {sys.platform!r} yet.",
+                file=sys.stderr,
+            )
+            return
+
+        self._palette.set_providers(self._window_provider, self._app_provider)
+        # Palette -> backend activation.
+        self._palette.activate_window.connect(self._on_activate_window)
+        self._palette.launch_app.connect(self._on_launch_app)
+        self._palette.activate_app.connect(self._on_activate_app)
+
+        # Register the launcher hotkey.
+        self._hotkey_provider.register(
+            self.config.hotkeys.launcher, self._palette.show_palette
+        )
+        self._hotkey_provider.start()
+
+    @Slot(int)
+    def _on_activate_window(self, window_id: int) -> None:
+        if self._window_provider is not None:
+            self._window_provider.activate_window(window_id)
+
+    @Slot(str)
+    def _on_launch_app(self, bundle_path: str) -> None:
+        if self._app_provider is not None:
+            self._app_provider.launch(bundle_path)
+
+    @Slot(str)
+    def _on_activate_app(self, bundle_id: str) -> None:
+        if self._window_provider is not None:
+            self._window_provider.activate_app(bundle_id)
+
     @Slot()
     def _on_settings(self) -> None:
         # Placeholder until the Settings UI is built in Phase 4.
@@ -92,7 +146,19 @@ class KageApp(QObject):
 
     @Slot()
     def _on_reload(self) -> None:
+        old_chord = self.config.hotkeys.launcher
         self.config = load_config()
+        # Re-bind launcher hotkey if it changed.
+        if self._hotkey_provider is not None and self._palette is not None:
+            if self.config.hotkeys.launcher != old_chord:
+                try:
+                    self._hotkey_provider.unregister(old_chord)
+                except Exception:
+                    pass
+                self._hotkey_provider.register(
+                    self.config.hotkeys.launcher, self._palette.show_palette
+                )
+        self._palette.config = self.config if self._palette else None
         self.config_changed.emit()
         if self._tray is not None:
             self._tray.show_message("Kage", "Configuration reloaded.")

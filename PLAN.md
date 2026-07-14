@@ -58,12 +58,12 @@ Status: ☐ todo · ◐ in progress · ☑ done
 - ☑ Accessibility-permission check + first-run prompt
 
 ### Phase 1 — Super+A launcher (no event tap needed beyond a plain hotkey)
-- ☐ AppProvider (macOS): enumerate `.app` bundles with names + icons; launch via NSWorkspace
-- ☐ WindowProvider (macOS): list open windows via CGWindowList (title, app, window id); activate via AX/NSRunningApplication
-- ☐ Palette UI: frameless, centered, pre-built hidden window; text field + result list with icons
-- ☐ Fuzzy matching over merged results (open windows ranked above unopened apps)
-- ☐ Global hotkey Super+A shows palette; Enter activates/launches; Esc hides
-- ☐ Verify end-to-end: cold launch of an app, activation of an open window, latency feels instant
+- ☑ AppProvider (macOS): enumerate `.app` bundles with names + icons; launch via NSWorkspace
+- ☑ WindowProvider (macOS): list open windows via CGWindowList (title, app, window id); activate via AX/NSRunningApplication
+- ☑ Palette UI: frameless, centered, pre-built hidden window; text field + result list with icons
+- ☑ Fuzzy matching over merged results (open windows ranked above unopened apps)
+- ☑ Global hotkey Super+A shows palette; Enter activates/launches; Esc hides
+- ☑ Verify end-to-end: cold launch of an app, activation of an open window, latency feels instant
 
 ### Phase 2 — Alt+Tab app switcher
 - ☐ CGEventTap: capture Alt+Tab, suppress delivery to focused app, detect Alt release
