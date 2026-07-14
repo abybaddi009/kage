@@ -57,24 +57,42 @@ class _WindowEntry:
 
 
 class _ItemWidget(QFrame):
-    """A single icon+label tile; highlights when selected."""
+    """A single tile; highlights when selected.
 
-    def __init__(self, icon_path: str | None, label: str) -> None:
+    Renders either a small app icon (default theme) or, when a window
+    screenshot is supplied, a larger preview thumbnail -- both with the
+    label underneath.
+    """
+
+    def __init__(
+        self,
+        icon_path: str | None,
+        label: str,
+        preview: QPixmap | None = None,
+    ) -> None:
         super().__init__()
         self._selected = False
         self.setObjectName("switcherItem")
 
-        icon_lbl = QLabel()
-        pix = QPixmap(icon_path) if icon_path else QPixmap()
-        if not pix.isNull():
-            icon_lbl.setPixmap(
-                pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        image_lbl = QLabel()
+        image_lbl.setAlignment(Qt.AlignCenter)
+        if preview is not None and not preview.isNull():
+            image_size = (176, 110)
+            image_lbl.setFixedSize(*image_size)
+            image_lbl.setPixmap(
+                preview.scaled(*image_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
+            text_width = 176
         else:
-            icon_lbl.setFixedSize(64, 64)
-            icon_lbl.setText("▢")
-            icon_lbl.setAlignment(Qt.AlignCenter)
-        icon_lbl.setAlignment(Qt.AlignCenter)
+            pix = QPixmap(icon_path) if icon_path else QPixmap()
+            if not pix.isNull():
+                image_lbl.setPixmap(
+                    pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+            else:
+                image_lbl.setFixedSize(64, 64)
+                image_lbl.setText("▢")
+            text_width = 96
 
         text_lbl = QLabel(label)
         text_lbl.setWordWrap(True)
@@ -82,15 +100,18 @@ class _ItemWidget(QFrame):
         f = QFont()
         f.setPointSize(11)
         text_lbl.setFont(f)
-        text_lbl.setMaximumWidth(96)
+        text_lbl.setMaximumWidth(text_width)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
-        lay.addWidget(icon_lbl)
+        lay.addWidget(image_lbl)
         lay.addWidget(text_lbl)
 
-        self.setFixedSize(108, 110)
+        if preview is not None and not preview.isNull():
+            self.setFixedSize(196, 156)
+        else:
+            self.setFixedSize(108, 110)
         self._update_style()
 
     def set_selected(self, on: bool) -> None:
@@ -120,6 +141,8 @@ class SwitcherOverlay(QWidget):
         self._mode = "apps"  # "apps" | "windows"
         self._index = 0
         self._previews_enabled = False
+        self._theme = "default"
+        self._tile_previews: dict[int, QPixmap] = {}
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -157,15 +180,30 @@ class SwitcherOverlay(QWidget):
 
     # ---- population ----
 
-    def set_apps(self, entries: list[_AppEntry], select_index: int = 0) -> None:
+    def set_theme(self, theme: str) -> None:
+        self._theme = theme
+
+    def set_apps(
+        self,
+        entries: list[_AppEntry],
+        select_index: int = 0,
+        tile_previews: dict[int, QPixmap] | None = None,
+    ) -> None:
         self._mode = "apps"
         self._entries = entries
+        self._tile_previews = tile_previews or {}
         self._rebuild()
         self._select(min(select_index, max(0, len(entries) - 1)))
 
-    def set_windows(self, entries: list[_WindowEntry], select_index: int = 0) -> None:
+    def set_windows(
+        self,
+        entries: list[_WindowEntry],
+        select_index: int = 0,
+        tile_previews: dict[int, QPixmap] | None = None,
+    ) -> None:
         self._mode = "windows"
         self._entries = entries
+        self._tile_previews = tile_previews or {}
         self._rebuild()
         self._select(min(select_index, max(0, len(entries) - 1)))
 
@@ -176,10 +214,15 @@ class SwitcherOverlay(QWidget):
             if w is not None:
                 w.deleteLater()
         for e in self._entries:
+            preview = None
+            if self._theme == "window_previews":
+                wid = getattr(e, "window_id", None)
+                if wid is not None:
+                    preview = self._tile_previews.get(wid)
             if isinstance(e, _AppEntry):
-                tile = _ItemWidget(e.icon_path, e.name)
+                tile = _ItemWidget(e.icon_path, e.name, preview=preview)
             else:
-                tile = _ItemWidget(e.icon_path, e.title or e.app_name)
+                tile = _ItemWidget(e.icon_path, e.title or e.app_name, preview=preview)
             self._strip_layout.addWidget(tile)
 
     def _select(self, index: int) -> None:
@@ -234,7 +277,15 @@ class SwitcherOverlay(QWidget):
             return
         e = self._entries[self._index]
         if self._mode == "apps" and isinstance(e, _AppEntry):
-            self.activate_app.emit(e.bundle_id or e.key)
+            # Raise the app's representative window via AX when we have
+            # one -- activate_app() only calls NSRunningApplication's
+            # activateWithOptions_, which brings the process forward but
+            # does not un-minimize/raise a specific (possibly hidden)
+            # window the way activate_window()'s AX raise action does.
+            if e.window_id is not None:
+                self.activate_window.emit(e.window_id)
+            else:
+                self.activate_app.emit(e.bundle_id or e.key)
         elif isinstance(e, _WindowEntry):
             self.activate_window.emit(e.window_id)
         self.hide()
@@ -296,20 +347,27 @@ class SwitcherController:
         windows = self._wp.list_windows()
         # Group by bundle_id (fallback app_name) to get distinct running apps.
         keys: dict[str, _AppEntry] = {}
+        representative_minimized: dict[str, bool] = {}
         for w in windows:
             key = w.bundle_id or w.app_name
-            if key in keys:
-                continue
-            icon = None
-            if w.bundle_id:
-                icon = self._ap.icon_for_bundle_id(w.bundle_id)
-            keys[key] = _AppEntry(
-                key=key,
-                name=w.app_name,
-                icon_path=icon,
-                bundle_id=w.bundle_id,
-                window_id=w.window_id,
-            )
+            if key not in keys:
+                icon = None
+                if w.bundle_id:
+                    icon = self._ap.icon_for_bundle_id(w.bundle_id)
+                keys[key] = _AppEntry(
+                    key=key,
+                    name=w.app_name,
+                    icon_path=icon,
+                    bundle_id=w.bundle_id,
+                    window_id=w.window_id,
+                )
+                representative_minimized[key] = w.is_minimized
+            elif representative_minimized.get(key) and not w.is_minimized:
+                # Prefer a visible window as the representative over a
+                # minimized one, so committing this entry raises something
+                # already on-screen rather than an arbitrary hidden window.
+                keys[key].window_id = w.window_id
+                representative_minimized[key] = False
         all_keys = list(keys.values())
         ordered_keys = self._mru.order([e.key for e in all_keys])
         key_to_entry = {e.key: e for e in all_keys}
@@ -369,23 +427,38 @@ class SwitcherController:
 
     def on_trigger(self) -> None:
         show_previews = bool(self.config.switcher.show_previews) if self.config else False
-        self.overlay.set_previews_enabled(show_previews)
+        theme = self.config.switcher.theme if self.config else "default"
+        expand = bool(self.config.switcher.expand_windows) if self.config else False
+        self.overlay.set_theme(theme)
+        # The window_previews theme shows a screenshot per tile already, so
+        # the single large "current selection" preview would be redundant.
+        self.overlay.set_previews_enabled(show_previews and theme == "default")
+
         if self._mode == "apps":
-            expand = bool(self.config.switcher.expand_windows) if self.config else False
-            if expand:
+            # window_previews only makes sense against individual windows,
+            # not one tile per app -- force the flat list for this theme.
+            if expand or theme == "window_previews":
                 entries = self._flat_window_entries()
-                self.overlay.set_windows(
-                    entries, select_index=1 if len(entries) > 1 else 0
-                )
+                select_index = 1 if len(entries) > 1 else 0
+                setter = self.overlay.set_windows
             else:
                 entries = self._running_apps()
                 # Start on the *previous* app (index 1) when possible, since
                 # index 0 is the current frontmost.
-                start = 1 if len(entries) > 1 else 0
-                self.overlay.set_apps(entries, select_index=start)
+                select_index = 1 if len(entries) > 1 else 0
+                setter = self.overlay.set_apps
         else:
             entries = self._app_windows()
-            self.overlay.set_windows(entries, select_index=0)
+            select_index = 0
+            setter = self.overlay.set_windows
+
+        tile_previews = (
+            self._capture_tile_previews(entries)
+            if show_previews and theme == "window_previews"
+            else {}
+        )
+        setter(entries, select_index=select_index, tile_previews=tile_previews)
+
         self._update_preview()
         self.overlay.show_overlay()
 
@@ -395,15 +468,33 @@ class SwitcherController:
 
     def on_commit(self) -> None:
         entry = self.overlay.current_entry()
-        if isinstance(entry, _WindowEntry) and entry.bundle_id:
+        if isinstance(entry, _AppEntry):
+            self._mru.touch(entry.bundle_id or entry.key)
+        elif isinstance(entry, _WindowEntry) and entry.bundle_id:
             self._mru.touch(entry.bundle_id)
         self.overlay.commit()
 
     def on_cancel(self) -> None:
         self.overlay.hide()
 
+    def _capture_tile_previews(self, entries: list) -> dict[int, QPixmap]:
+        out: dict[int, QPixmap] = {}
+        for e in entries:
+            wid = getattr(e, "window_id", None)
+            if wid is None or wid in out:
+                continue
+            data = self._wp.capture_preview(wid)
+            if not data:
+                continue
+            pix = QPixmap()
+            pix.loadFromData(data, "PNG")
+            out[wid] = pix
+        return out
+
     def _update_preview(self) -> None:
         if not (self.config and self.config.switcher.show_previews):
+            return
+        if self.config.switcher.theme != "default":
             return
         entry = self.overlay.current_entry()
         window_id = getattr(entry, "window_id", None)
@@ -424,7 +515,7 @@ class SwitcherController:
         # ``key`` may be a bundle id (preferred) or an app name fallback.
         # Heuristic: if it looks like a bundle id (contains '.'), activate
         # by bundle id; otherwise scan running windows for a matching app.
-        self._mru.touch(key_or_bid)
+        # (MRU touch happens once in on_commit(), keyed off the entry.)
         if "." in key_or_bid:
             self._wp.activate_app(key_or_bid)
             return

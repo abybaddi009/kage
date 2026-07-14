@@ -83,6 +83,15 @@ class MacWindowProvider(WindowProvider):
         # the objc object alive so activate_window() can raise it later.
         self._ax_refs: dict[int, object] = {}
         self._ax_counter = 0
+        self._windows_cache: list[WindowInfo] | None = None
+        self._windows_cache_at: float = 0.0
+
+    # AX enumeration is a round trip per running app (~15 apps took ~0.75s
+    # in testing), which is fine once but far too slow to redo on every
+    # keystroke in the palette or every call within a single switcher
+    # trigger. A short cache absorbs bursts of calls without meaningfully
+    # risking staleness (windows rarely open/close within this window).
+    _WINDOWS_CACHE_TTL = 0.25
 
     def list_windows(self) -> list[WindowInfo]:
         """Enumerate windows of every regular (Dock-visible) running app via AX.
@@ -92,6 +101,14 @@ class MacWindowProvider(WindowProvider):
         per-app window list has no such restriction, so it's the source of
         truth here; minimized windows come back with is_minimized=True.
         """
+        import time
+
+        now = time.monotonic()
+        if (
+            self._windows_cache is not None
+            and (now - self._windows_cache_at) < self._WINDOWS_CACHE_TTL
+        ):
+            return self._windows_cache
         try:
             from AppKit import NSApplicationActivationPolicyRegular  # type: ignore
         except ImportError:
@@ -108,6 +125,8 @@ class MacWindowProvider(WindowProvider):
             bundle_id = str(app.bundleIdentifier()) if app.bundleIdentifier() else None
             name = str(app.localizedName()) if app.localizedName() else (bundle_id or "App")
             out.extend(self._ax_windows(pid, app_name=name, bundle_id=bundle_id))
+        self._windows_cache = out
+        self._windows_cache_at = now
         return out
 
     def frontmost_bundle_id(self) -> str | None:

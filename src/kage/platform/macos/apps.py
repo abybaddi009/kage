@@ -40,8 +40,27 @@ class MacAppProvider(AppProvider):
             self._icon_cache_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
+        # Directory scan + plist reads take ~80ms; cache it for the process
+        # lifetime instead of re-scanning on every icon lookup (the app
+        # switcher/launcher can ask for this dozens of times per keystroke
+        # or per Alt+Tab). Installed apps rarely change while Kage runs.
+        self._apps_cache: list[AppInfo] | None = None
+        self._icon_by_bundle: dict[str, str | None] = {}
 
     def list_apps(self) -> list[AppInfo]:
+        if self._apps_cache is None:
+            self._apps_cache = self._scan_apps()
+            self._icon_by_bundle = {
+                a.bundle_id: a.icon_path for a in self._apps_cache if a.bundle_id
+            }
+        return self._apps_cache
+
+    def icon_for_bundle_id(self, bundle_id: str) -> str | None:
+        if self._apps_cache is None:
+            self.list_apps()
+        return self._icon_by_bundle.get(bundle_id)
+
+    def _scan_apps(self) -> list[AppInfo]:
         seen: set[str] = set()
         apps: list[AppInfo] = []
         for d in _APP_DIRS:

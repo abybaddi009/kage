@@ -35,6 +35,9 @@ class PaletteConfig:
     windows_first: bool = True
 
 
+SWITCHER_THEMES = ("default", "window_previews")
+
+
 @dataclass
 class SwitcherConfig:
     # Alt+Tab lists every window of every app as its own flat entry (with
@@ -44,6 +47,11 @@ class SwitcherConfig:
     # Show a live thumbnail of the currently-selected window/app while
     # cycling in the Alt+Tab / Alt+` overlay.
     show_previews: bool = True
+    # Visual theme for the switcher overlay. "default": icon tiles plus one
+    # large preview of the current selection. "window_previews": every
+    # visible window is its own tile showing its own screenshot with the
+    # title below (implies showing every window, not grouped by app).
+    theme: str = "default"
 
 
 @dataclass
@@ -89,6 +97,8 @@ def _merge(cfg: Config, data: dict) -> Config:
             cfg.switcher.expand_windows = bool(sw["expand_windows"])
         if "show_previews" in sw:
             cfg.switcher.show_previews = bool(sw["show_previews"])
+        if "theme" in sw and str(sw["theme"]) in SWITCHER_THEMES:
+            cfg.switcher.theme = str(sw["theme"])
 
     if "quit_on_tray_close" in data:
         cfg.quit_on_tray_close = bool(data["quit_on_tray_close"])
@@ -114,6 +124,7 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         "[switcher]",
         f"expand_windows = {'true' if cfg.switcher.expand_windows else 'false'}",
         f"show_previews = {'true' if cfg.switcher.show_previews else 'false'}",
+        f'theme = {_toml_str(cfg.switcher.theme)}',
         "",
         f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
         "",

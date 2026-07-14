@@ -13,6 +13,7 @@ import sys
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -27,6 +28,12 @@ from PySide6.QtWidgets import (
 )
 
 from .config import Config, save_config
+
+# (config value, display label) -- keep in sync with SWITCHER_THEMES in config.py.
+_SWITCHER_THEMES = [
+    ("default", "Default (icons + selected-window preview)"),
+    ("window_previews", "Window Previews (every window shown as a thumbnail)"),
+]
 
 # Qt.Key -> chord key token, matching the names parse_chord()/_KEYCODES accept.
 _KEY_NAMES: dict[int, str] = {
@@ -205,6 +212,13 @@ class SettingsDialog(QDialog):
         self._show_previews.setChecked(config.switcher.show_previews)
         form.addRow("", self._show_previews)
 
+        self._theme = QComboBox()
+        for value, label in _SWITCHER_THEMES:
+            self._theme.addItem(label, value)
+        idx = self._theme.findData(config.switcher.theme)
+        self._theme.setCurrentIndex(idx if idx >= 0 else 0)
+        form.addRow("Switcher theme", self._theme)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
         )
@@ -225,6 +239,7 @@ class SettingsDialog(QDialog):
         cfg.palette.windows_first = self._windows_first.isChecked()
         cfg.switcher.expand_windows = self._expand_windows.isChecked()
         cfg.switcher.show_previews = self._show_previews.isChecked()
+        cfg.switcher.theme = self._theme.currentData()
         try:
             save_config(cfg)
         except Exception as exc:  # pragma: no cover - filesystem error
