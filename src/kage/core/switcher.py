@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtCore import QObject, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -93,7 +93,12 @@ class _ItemWidget(QFrame):
     a small app icon before a middle-elided title; ``badge_count`` (used
     for non-expanded app entries) overlays a window-count badge on the
     image's top-right corner.
+
+    Emits :pyattr:`clicked` on a left-button press so the launcher palette
+    can use the same tiles as the switcher overlay for its overview grid.
     """
+
+    clicked = Signal()
 
     def __init__(
         self,
@@ -101,6 +106,7 @@ class _ItemWidget(QFrame):
         label: str,
         preview: QPixmap | None = None,
         badge_count: int | None = None,
+        preview_size: tuple[int, int] = (176, 110),
     ) -> None:
         super().__init__()
         self._selected = False
@@ -110,15 +116,14 @@ class _ItemWidget(QFrame):
         image_lbl = QLabel()
         image_lbl.setAlignment(Qt.AlignCenter)
         if has_preview:
-            image_size = (176, 110)
-            image_lbl.setFixedSize(*image_size)
+            image_lbl.setFixedSize(*preview_size)
             pix = preview.scaled(
-                *image_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                *preview_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             if badge_count:
                 pix = _with_count_badge(pix, badge_count)
             image_lbl.setPixmap(pix)
-            text_width = 176
+            text_width = preview_size[0]
         else:
             pix = QPixmap(icon_path) if icon_path else QPixmap()
             if not pix.isNull():
@@ -173,7 +178,7 @@ class _ItemWidget(QFrame):
             lay.addWidget(text_lbl)
 
         if has_preview:
-            self.setFixedSize(196, 152)
+            self.setFixedSize(preview_size[0] + 20, preview_size[1] + 42)
         else:
             self.setFixedSize(108, 110)
         self._update_style()
@@ -181,6 +186,11 @@ class _ItemWidget(QFrame):
     def set_selected(self, on: bool) -> None:
         self._selected = on
         self._update_style()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
     def _update_style(self) -> None:
         if self._selected:
@@ -494,12 +504,14 @@ class SwitcherOverlay(QWidget):
 # ---------------------------------------------------------------------------
 
 
-class SwitcherController:
+class SwitcherController(QObject):
     """Drives the overlay for both the app switcher and window switcher.
 
     ``mode`` selects whether the overlay shows running apps (Alt+Tab) or the
     windows of the active app (Alt+`).
     """
+
+    triggered = Signal()
 
     def __init__(
         self,
@@ -509,6 +521,7 @@ class SwitcherController:
         mode: str = "apps",
         config: Config | None = None,
     ) -> None:
+        super().__init__()
         self._wp = window_provider
         self._ap = app_provider
         self._mru = mru
@@ -606,6 +619,7 @@ class SwitcherController:
     # ---- SwitcherHandler interface ----
 
     def on_trigger(self, reverse: bool = False) -> None:
+        self.triggered.emit()
         show_previews = bool(self.config.switcher.show_previews) if self.config else False
         theme = self.config.switcher.theme if self.config else "default"
         expand = bool(self.config.switcher.expand_windows) if self.config else False

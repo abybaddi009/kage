@@ -17,9 +17,8 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -41,6 +40,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from .config import Config, save_config
 from .paths import logo_path, theme_preview_path
+from .theme import Tokens as _Tokens
 
 # (config value, name, description) -- keep values in sync with
 # SWITCHER_THEMES in config.py.
@@ -194,34 +194,6 @@ def _chord_row(initial: str) -> tuple[QWidget, ChordCaptureEdit]:
     layout.addWidget(button)
     row.setFixedWidth(270)
     return row, edit
-
-
-# ---------------------------------------------------------------------------
-# Theme tokens (derived from the system palette so light/dark both work)
-# ---------------------------------------------------------------------------
-
-
-class _Tokens:
-    def __init__(self) -> None:
-        pal = QApplication.palette()
-        self.dark = pal.color(QPalette.Window).lightness() < 128
-        self.accent = pal.color(QPalette.Highlight).name()
-        if self.dark:
-            self.card_bg = "rgba(255,255,255,6%)"
-            self.card_border = "rgba(255,255,255,10%)"
-            self.separator = "rgba(255,255,255,9%)"
-            self.sidebar_bg = "rgba(0,0,0,14%)"
-            self.hover = "rgba(255,255,255,8%)"
-            self.hover_border = "rgba(255,255,255,25%)"
-            self.muted = "#98989d"
-        else:
-            self.card_bg = "#ffffff"
-            self.card_border = "rgba(0,0,0,8%)"
-            self.separator = "rgba(0,0,0,8%)"
-            self.sidebar_bg = "rgba(0,0,0,4%)"
-            self.hover = "rgba(0,0,0,5%)"
-            self.hover_border = "rgba(0,0,0,20%)"
-            self.muted = "#6e6e73"
 
 
 def _section_icon(glyph: str, color: str) -> QIcon:
@@ -505,6 +477,17 @@ class SettingsDialog(QDialog):
         general.add_row(
             "Rank open windows above unopened apps", self._windows_first
         )
+
+        self._overview_enabled = QCheckBox()
+        self._overview_enabled.setChecked(config.palette.overview_enabled)
+        general.add_row(
+            "Show open windows overview grid", self._overview_enabled
+        )
+
+        self._overview_columns = QSpinBox()
+        self._overview_columns.setRange(2, 8)
+        self._overview_columns.setValue(config.palette.overview_columns)
+        general.add_row("Overview tiles per row", self._overview_columns)
         general.add_stretch()
 
         # ---- Switcher page ----
@@ -692,6 +675,8 @@ class SettingsDialog(QDialog):
         cfg.hotkeys.window_switcher = self._window_switcher.text().strip()
         cfg.palette.max_results = self._max_results.value()
         cfg.palette.windows_first = self._windows_first.isChecked()
+        cfg.palette.overview_enabled = self._overview_enabled.isChecked()
+        cfg.palette.overview_columns = self._overview_columns.value()
         cfg.switcher.expand_windows = self._expand_windows.isChecked()
         cfg.switcher.show_previews = self._show_previews.isChecked()
         cfg.switcher.theme = self._theme_picker.value()

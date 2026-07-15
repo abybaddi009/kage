@@ -151,6 +151,7 @@ class KageApp(QObject):
             self._window_provider, self._app_provider, self._mru,
             mode="apps", config=self.config,
         )
+        self._app_switcher.triggered.connect(self._palette.hide_palette)
         self._hotkey_provider.register_switcher(
             self.config.hotkeys.app_switcher, self._app_switcher
         )
@@ -161,13 +162,22 @@ class KageApp(QObject):
             self._window_provider, self._app_provider, self._mru,
             mode="windows", config=self.config,
         )
+        self._window_switcher.triggered.connect(self._palette.hide_palette)
         self._hotkey_provider.register_switcher(
             self.config.hotkeys.window_switcher, self._window_switcher
         )
 
-        # Register the launcher hotkey.
+        # Register the launcher hotkey. Hiding any open switcher overlay
+        # when the palette opens avoids two overlays being visible at once.
+        def _show_palette():
+            if self._app_switcher is not None:
+                self._app_switcher.overlay.hide()
+            if self._window_switcher is not None:
+                self._window_switcher.overlay.hide()
+            self._palette.show_palette()
+
         self._hotkey_provider.register(
-            self.config.hotkeys.launcher, self._palette.show_palette
+            self.config.hotkeys.launcher, _show_palette
         )
         self._hotkey_provider.start()
 
@@ -227,7 +237,7 @@ class KageApp(QObject):
                 except Exception:
                     pass
                 self._hotkey_provider.register(
-                    self.config.hotkeys.launcher, self._palette.show_palette
+                    self.config.hotkeys.launcher, _show_palette
                 )
             if self.config.hotkeys.app_switcher != old_switch and self._app_switcher is not None:
                 try:

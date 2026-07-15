@@ -33,6 +33,11 @@ class PaletteConfig:
     max_results: int = 12
     # Open windows are ranked above unopened apps regardless of score.
     windows_first: bool = True
+    # Show a KDE-style grid of live window thumbnails below the palette
+    # results. Typing filters both the result list and the thumbnail grid.
+    overview_enabled: bool = True
+    # Maximum thumbnail tiles per row in the overview grid.
+    overview_columns: int = 4
 
 
 SWITCHER_THEMES = ("default", "window_previews")
@@ -97,6 +102,10 @@ def _merge(cfg: Config, data: dict) -> Config:
             cfg.palette.max_results = int(pal["max_results"])
         if "windows_first" in pal:
             cfg.palette.windows_first = bool(pal["windows_first"])
+        if "overview_enabled" in pal:
+            cfg.palette.overview_enabled = bool(pal["overview_enabled"])
+        if "overview_columns" in pal:
+            cfg.palette.overview_columns = int(pal["overview_columns"])
 
     sw = data.get("switcher")
     if isinstance(sw, dict):
@@ -133,6 +142,8 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         "[palette]",
         f"max_results = {int(cfg.palette.max_results)}",
         f"windows_first = {'true' if cfg.palette.windows_first else 'false'}",
+        f"overview_enabled = {'true' if cfg.palette.overview_enabled else 'false'}",
+        f"overview_columns = {int(cfg.palette.overview_columns)}",
         "",
         "[switcher]",
         f"expand_windows = {'true' if cfg.switcher.expand_windows else 'false'}",
