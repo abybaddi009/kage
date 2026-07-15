@@ -203,6 +203,21 @@ class _OverviewGrid(QWidget):
     def is_empty(self) -> bool:
         return len(self._entries) == 0
 
+    def highlight_window(self, window_id: int | None) -> None:
+        """Highlight the thumbnail tile matching ``window_id``.
+
+        Clears any previous highlight. Used by the palette window to
+        mirror the results-list selection onto the overview grid as the
+        user navigates with the arrow keys.
+        """
+        for i in range(self._container.count()):
+            tile = self._container.tile(i)
+            if not isinstance(tile, _ItemWidget):
+                continue
+            e = getattr(tile, "_window_entry", None)
+            wid = e.window_id if e is not None else None
+            tile.set_selected(wid == window_id)
+
     def _rebuild_tiles(self, pw: int, ph: int, avail_w: int) -> None:
         tiles: list[_ItemWidget] = []
         for e in self._entries:
@@ -297,10 +312,6 @@ class PaletteWindow(QWidget):
         self._overview = _OverviewGrid()
         self._overview.activate_window.connect(self.activate_window)
 
-        # --- Separator between list and overview ---
-        self._separator = QFrame()
-        self._separator.setFixedHeight(1)
-        self._separator.setStyleSheet(f"background:{OVERLAY_SEPARATOR};")
 
         # --- Layout ---
         self._body = QWidget()
@@ -308,7 +319,6 @@ class PaletteWindow(QWidget):
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(10)
         body_lay.addWidget(self._list)
-        body_lay.addWidget(self._separator)
         body_lay.addWidget(self._overview, stretch=1)
 
         layout = QVBoxLayout(self)
@@ -391,6 +401,7 @@ class PaletteWindow(QWidget):
                 else:
                     row = row + 1 if row < n - 1 else 0
                 self._list.setCurrentRow(row)
+                self._sync_overview_highlight()
                 return True
         return super().eventFilter(obj, event)
 
@@ -403,6 +414,20 @@ class PaletteWindow(QWidget):
     def _reset_selection(self, _text: str) -> None:
         if self._list.count() > 0:
             self._list.setCurrentRow(0)
+
+    def _sync_overview_highlight(self) -> None:
+        """Mirror the results-list selection onto the overview grid.
+
+        Highlights the thumbnail tile for the selected window result (if
+        any) and clears the highlight otherwise.
+        """
+        row = self._list.currentRow()
+        wid: int | None = None
+        if 0 <= row < len(self._results):
+            r = self._results[row]
+            if r.is_window:
+                wid = r.window_id
+        self._overview.highlight_window(wid)
 
     # ---- preview capture ----
 
@@ -461,11 +486,11 @@ class PaletteWindow(QWidget):
 
         # --- Overview grid ---
         self._update_overview(text)
+        self._sync_overview_highlight()
 
     def _update_overview(self, text: str) -> None:
         if not self.config.palette.overview_enabled:
             self._overview.hide()
-            self._separator.hide()
             return
         q = text.strip().lower()
         entries: list[_WindowEntry] = []
@@ -490,10 +515,8 @@ class PaletteWindow(QWidget):
             )
         if not entries:
             self._overview.hide()
-            self._separator.hide()
             return
         self._overview.show()
-        self._separator.show()
         self._overview.set_entries(entries, self._tile_previews_cache)
 
     def _activate_selected(self) -> None:
