@@ -324,22 +324,29 @@ class _ThemePicker(QWidget):
 
     selection_changed = Signal(str)
 
-    def __init__(self, themes, expanded: bool = False, parent=None) -> None:
+    def __init__(
+        self, themes, expanded: bool = False, previews: bool = True, parent=None
+    ) -> None:
         super().__init__(parent)
         self._cards: dict[str, _ThemeCard] = {}
         self._value = themes[0][0] if themes else ""
         self._expanded = bool(expanded)
+        self._previews = bool(previews)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
         for value, name, desc in themes:
-            image_path = theme_preview_path(value, self._expanded)
+            image_path = theme_preview_path(value, self._expanded, self._previews)
             card = _ThemeCard(value, name, desc, image_path)
             self._cards[value] = card
             lay.addWidget(card)
         lay.addStretch(1)
         self.select(self._value)
+
+    def _refresh_images(self) -> None:
+        for value, card in self._cards.items():
+            card.set_image(theme_preview_path(value, self._expanded, self._previews))
 
     def set_expanded(self, expanded: bool) -> None:
         """Swap card images to the variant matching the expand-windows toggle."""
@@ -347,8 +354,15 @@ class _ThemePicker(QWidget):
         if expanded == self._expanded:
             return
         self._expanded = expanded
-        for value, card in self._cards.items():
-            card.set_image(theme_preview_path(value, expanded))
+        self._refresh_images()
+
+    def set_previews_enabled(self, previews: bool) -> None:
+        """Swap card images to the variant matching the show-previews toggle."""
+        previews = bool(previews)
+        if previews == self._previews:
+            return
+        self._previews = previews
+        self._refresh_images()
 
     def select(self, value: str) -> None:
         if value not in self._cards:
@@ -497,7 +511,9 @@ class SettingsDialog(QDialog):
         switcher = _Page("Switcher", "Choose how the switcher looks and behaves.")
 
         self._theme_picker = _ThemePicker(
-            _SWITCHER_THEMES, expanded=config.switcher.expand_windows
+            _SWITCHER_THEMES,
+            expanded=config.switcher.expand_windows,
+            previews=config.switcher.show_previews,
         )
         self._theme_picker.select(config.switcher.theme)
         switcher.add_full(self._theme_picker)
@@ -511,6 +527,7 @@ class SettingsDialog(QDialog):
 
         self._show_previews = QCheckBox()
         self._show_previews.setChecked(config.switcher.show_previews)
+        self._show_previews.toggled.connect(self._theme_picker.set_previews_enabled)
         switcher.add_row(
             "Show a live preview while switching", self._show_previews
         )

@@ -27,19 +27,29 @@ def data_dir() -> Path:
     return base / APP_NAME
 
 
-def theme_preview_path(theme: str, expanded: bool = False) -> Path | None:
+def theme_preview_path(
+    theme: str, expanded: bool = False, previews: bool = True
+) -> Path | None:
     """Path to the bundled preview screenshot for a switcher theme.
 
     ``expanded`` selects the variant matching the "show every window as
-    its own entry" setting, so the settings theme cards can mirror it.
+    its own entry" setting, and ``previews`` the "show a live preview
+    while switching" setting, so the settings theme cards can mirror both.
+    ``previews`` only affects the "default" theme -- "window_previews"
+    always shows a thumbnail per tile regardless of that setting.
     """
-    names = {
-        ("default", False): "default.png",
-        ("default", True): "default-expanded.png",
-        ("window_previews", False): "thumbnails.png",
-        ("window_previews", True): "thumbnails-expanded.png",
-    }
-    file_name = names.get((theme, expanded))
+    if theme == "default" and not previews:
+        file_name = (
+            "default-expanded-no-preview.png" if expanded else "default-no-preview.png"
+        )
+    else:
+        names = {
+            ("default", False): "default.png",
+            ("default", True): "default-expanded.png",
+            ("window_previews", False): "thumbnails.png",
+            ("window_previews", True): "thumbnails-expanded.png",
+        }
+        file_name = names.get((theme, expanded))
     if file_name is None:
         return None
     try:

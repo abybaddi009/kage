@@ -310,6 +310,7 @@ class SwitcherOverlay(QWidget):
         )
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WA_DeleteOnClose, False)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         self._preview_label = QLabel()
         self._preview_label.setFixedSize(480, 270)

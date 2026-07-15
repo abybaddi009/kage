@@ -112,6 +112,15 @@ ov.set_windows(wins, select_index=1)
 ov.set_preview(content[1])
 composite(render(ov), "default-expanded.png")
 
+# 2b. Default theme, previews off: plain icon tiles, no big preview panel.
+ov.set_previews_enabled(False)
+ov.set_apps(apps, select_index=1)
+composite(render(ov), "default-no-preview.png")
+
+# 2c. Default theme, expanded + previews off: plain per-window icon tiles.
+ov.set_windows(wins, select_index=1)
+composite(render(ov), "default-expanded-no-preview.png")
+
 # 3. Previews theme, non-expanded: one thumbnail per app + count badges.
 ov.set_theme("window_previews")
 ov.set_previews_enabled(False)
