@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from ..backends.base import AppProvider, WindowInfo, WindowProvider
 from .activation import activate_window_reliably
 from .config import Config
-from .mru import MRUTracker
+from .mru import MRUTracker, WindowMRUTracker
 from .screens import target_screen
 
 
@@ -520,11 +520,13 @@ class SwitcherController(QObject):
         mru: MRUTracker,
         mode: str = "apps",
         config: Config | None = None,
+        window_mru: WindowMRUTracker | None = None,
     ) -> None:
         super().__init__()
         self._wp = window_provider
         self._ap = app_provider
         self._mru = mru
+        self._wmru = window_mru
         self._mode = mode
         self.config = config
         self.overlay = SwitcherOverlay()
@@ -567,29 +569,40 @@ class SwitcherController(QObject):
         return [key_to_entry[k] for k in ordered_keys if k in key_to_entry]
 
     def _flat_window_entries(self) -> list[_WindowEntry]:
-        """Every window of every app as its own entry, MRU-ordered by app."""
+        """Every window of every app as its own entry, ordered by per-window
+        MRU so a single Alt+Tab targets the previously focused window
+        regardless of which app owns it (KDE-style). Windows kage has never
+        seen activated are appended after known ones in list_windows order."""
         windows = self._wp.list_windows()
-        by_app: dict[str, list[WindowInfo]] = {}
-        app_order: list[str] = []
+        # Deduplicate by window_id (AX may report a window twice across
+        # Spaces); keep the first occurrence.
+        seen_ids: set[int] = set()
+        uniq: list[WindowInfo] = []
         for w in windows:
-            key = w.bundle_id or w.app_name
-            by_app.setdefault(key, []).append(w)
-            if key not in app_order:
-                app_order.append(key)
-        ordered_keys = self._mru.order(app_order)
+            if w.window_id in seen_ids:
+                continue
+            seen_ids.add(w.window_id)
+            uniq.append(w)
+
+        if self._wmru is not None:
+            ordered_ids = self._wmru.order([w.window_id for w in uniq])
+            by_id = {w.window_id: w for w in uniq}
+            ordered_windows = [by_id[wid] for wid in ordered_ids if wid in by_id]
+        else:
+            ordered_windows = uniq
+
         out: list[_WindowEntry] = []
-        for key in ordered_keys:
-            for w in by_app.get(key, []):
-                icon = self._ap.icon_for_bundle_id(w.bundle_id) if w.bundle_id else None
-                out.append(
-                    _WindowEntry(
-                        window_id=w.window_id,
-                        title=w.window_title or w.app_name,
-                        app_name=w.app_name,
-                        icon_path=icon,
-                        bundle_id=w.bundle_id,
-                    )
+        for w in ordered_windows:
+            icon = self._ap.icon_for_bundle_id(w.bundle_id) if w.bundle_id else None
+            out.append(
+                _WindowEntry(
+                    window_id=w.window_id,
+                    title=w.window_title or w.app_name,
+                    app_name=w.app_name,
+                    icon_path=icon,
+                    bundle_id=w.bundle_id,
                 )
+            )
         return out
 
     def _app_windows(self) -> list[_WindowEntry]:
@@ -650,6 +663,10 @@ class SwitcherController(QObject):
         # held, e.g. Alt+Shift+Tab) lands on the last entry. Without this,
         # the window switcher (mode="windows") started on index 0, the
         # current window, so a quick tap-and-release did nothing.
+        #
+        # In expanded mode, entries are ordered by per-window MRU (not
+        # grouped by app), so index 1 is genuinely the previously-focused
+        # window -- a single tap thus mirrors KDE's per-window Alt+Tab.
         if len(entries) > 1:
             select_index = (len(entries) - 1) if reverse else 1
         else:
@@ -673,8 +690,13 @@ class SwitcherController(QObject):
         entry = self.overlay.current_entry()
         if isinstance(entry, _AppEntry):
             self._mru.touch(entry.bundle_id or entry.key)
-        elif isinstance(entry, _WindowEntry) and entry.bundle_id:
-            self._mru.touch(entry.bundle_id)
+            if self._wmru is not None and entry.window_id is not None:
+                self._wmru.touch(entry.window_id)
+        elif isinstance(entry, _WindowEntry):
+            if entry.bundle_id:
+                self._mru.touch(entry.bundle_id)
+            if self._wmru is not None:
+                self._wmru.touch(entry.window_id)
         self.overlay.commit()
 
     def on_cancel(self) -> None:

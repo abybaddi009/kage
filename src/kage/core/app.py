@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QVBoxLayout
 
 from .config import Config, load_config
-from .mru import MRUTracker
+from .mru import MRUTracker, WindowMRUTracker
 from .tray import TrayController
 
 
@@ -53,6 +53,7 @@ class KageApp(QObject):
         self._app_provider = None
         self._hotkey_provider = None
         self._mru: MRUTracker | None = None
+        self._wmru: WindowMRUTracker | None = None
         self._app_switcher: SwitcherController | None = None
         self._window_switcher: SwitcherController | None = None
 
@@ -141,15 +142,17 @@ class KageApp(QObject):
         self._palette.launch_app.connect(self._on_launch_app)
         self._palette.activate_app.connect(self._on_activate_app)
 
-        # MRU tracking shared by palette + switchers.
+        # MRU tracking shared by palette + switchers. The per-window MRU
+        # orders the expanded Alt+Tab by actual window focus recency.
         self._mru = MRUTracker()
+        self._wmru = WindowMRUTracker()
 
         # Alt+Tab app switcher overlay.
         from .switcher import SwitcherController
 
         self._app_switcher = SwitcherController(
             self._window_provider, self._app_provider, self._mru,
-            mode="apps", config=self.config,
+            mode="apps", config=self.config, window_mru=self._wmru,
         )
         self._app_switcher.triggered.connect(self._palette.hide_palette)
         self._hotkey_provider.register_switcher(
@@ -160,7 +163,7 @@ class KageApp(QObject):
         # to the frontmost app's windows via AXUIElement).
         self._window_switcher = SwitcherController(
             self._window_provider, self._app_provider, self._mru,
-            mode="windows", config=self.config,
+            mode="windows", config=self.config, window_mru=self._wmru,
         )
         self._window_switcher.triggered.connect(self._palette.hide_palette)
         self._hotkey_provider.register_switcher(
@@ -187,6 +190,8 @@ class KageApp(QObject):
             from .activation import activate_window_reliably
 
             activate_window_reliably(self._window_provider, window_id)
+            if self._wmru is not None:
+                self._wmru.touch(window_id)
             if self._mru is not None:
                 for w in self._window_provider.list_windows():
                     if w.window_id == window_id:
