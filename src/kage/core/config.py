@@ -61,6 +61,10 @@ class SwitcherConfig:
 
 SCREEN_PREFERENCES = ("active", "pointer")
 
+# UI size tiers: scale tile/icon/text size in the launcher palette and
+# switcher overlay. See src/kage/core/theme.py:UI_SIZE_SCALES.
+UI_SIZES = ("small", "medium", "large")
+
 
 @dataclass
 class Config:
@@ -73,6 +77,9 @@ class Config:
     # (the screen the window last occupied, falling back to the primary
     # screen) or "pointer" (the screen currently under the mouse cursor).
     screen_preference: str = "active"
+    # UI size tier: scales tile/icon/text size in the palette overview grid
+    # and the Alt-Tab switcher. One of UI_SIZES.
+    ui_size: str = "small"
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -121,6 +128,8 @@ def _merge(cfg: Config, data: dict) -> Config:
 
     if "screen_preference" in data and str(data["screen_preference"]) in SCREEN_PREFERENCES:
         cfg.screen_preference = str(data["screen_preference"])
+    if "ui_size" in data and str(data["ui_size"]) in UI_SIZES:
+        cfg.ui_size = str(data["ui_size"])
     return cfg
 
 
@@ -133,6 +142,7 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         "",
         f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
         f'screen_preference = {_toml_str(cfg.screen_preference)}',
+        f'ui_size = {_toml_str(cfg.ui_size)}',
         "",
         "[hotkeys]",
         f'launcher = {_toml_str(cfg.hotkeys.launcher)}',

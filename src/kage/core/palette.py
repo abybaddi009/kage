@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QFontMetrics, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -57,6 +57,7 @@ from .theme import (
     OVERLAY_SEPARATOR,
     OVERLAY_TEXT,
     Tokens,
+    ui_scale,
 )
 
 
@@ -81,25 +82,34 @@ _CONTAINER_MARGIN = 14
 
 
 def _compute_tile_size(
-    n_entries: int, avail_w: int, avail_h: int
+    n_entries: int, avail_w: int, avail_h: int, scale: float = 1.0
 ) -> tuple[int, int]:
     """Return ``(preview_w, preview_h)`` so all tiles fit without scrolling.
 
     Tries every column count from 1..N and picks the one that yields the
-    largest tile size that still fits within the available area.
+    largest tile size that still fits within the available area. ``scale``
+    multiplies the base tile constants (max preview size, tile chrome
+    overhead, gap) so a UI size tier can grow tiles without changing the
+    shrink-to-fit math.
     """
     if n_entries <= 0 or avail_w <= 0 or avail_h <= 0:
-        return _MAX_PREVIEW_W, _MAX_PREVIEW_H
+        return int(_MAX_PREVIEW_W * scale), int(_MAX_PREVIEW_H * scale)
 
-    best = (64, 40)  # minimum floor
+    max_pw = _MAX_PREVIEW_W * scale
+    max_ph = _MAX_PREVIEW_H * scale
+    w_overhead = _TILE_W_OVERHEAD * scale
+    h_overhead = _TILE_H_OVERHEAD * scale
+    gap = _TILE_GAP * scale
+
+    best = (max(48, int(64 * scale)), max(30, int(40 * scale)))  # minimum floor
     for cols in range(1, n_entries + 1):
         rows = math.ceil(n_entries / cols)
         # Width budget per tile (accounting for gaps + margins).
-        w_per_tile = (avail_w - _TILE_GAP * (cols - 1)) / cols
-        h_per_tile = (avail_h - _TILE_GAP * (rows - 1)) / rows
+        w_per_tile = (avail_w - gap * (cols - 1)) / cols
+        h_per_tile = (avail_h - gap * (rows - 1)) / rows
         # Convert to preview image area (subtract chrome).
-        pw = w_per_tile - _TILE_W_OVERHEAD
-        ph = h_per_tile - _TILE_H_OVERHEAD
+        pw = w_per_tile - w_overhead
+        ph = h_per_tile - h_overhead
         if pw <= 0 or ph <= 0:
             continue
         # Maintain the preview aspect ratio (176:110 ≈ 1.6).
@@ -111,8 +121,8 @@ def _compute_tile_size(
             pw_adj = ph * aspect
             ph_adj = ph
         # Cap at the maximum tile size.
-        pw_adj = min(pw_adj, _MAX_PREVIEW_W)
-        ph_adj = min(ph_adj, _MAX_PREVIEW_H)
+        pw_adj = min(pw_adj, max_pw)
+        ph_adj = min(ph_adj, max_ph)
         pw_adj = max(pw_adj, 48)
         ph_adj = max(ph_adj, 30)
         if pw_adj > best[0]:
@@ -131,19 +141,20 @@ class _OverviewGrid(QWidget):
 
     activate_window = Signal(int)  # window_id
 
-    def __init__(self) -> None:
+    def __init__(self, scale: float = 1.0) -> None:
         super().__init__()
         self._entries: list[_WindowEntry] = []
         self._previews: dict[int, QPixmap] = {}
+        self._scale = scale
         self._container = _FlowContainer()
         self._container.setObjectName("overviewBox")
         self._container.setStyleSheet(
             f"#overviewBox{{background:{OVERLAY_PANEL_BG};border-radius:12px;}}"
         )
-        self._container.set_margins(
-            _CONTAINER_MARGIN, _CONTAINER_MARGIN, _CONTAINER_MARGIN, _CONTAINER_MARGIN
-        )
-        self._container.set_spacing(_TILE_GAP, _TILE_GAP)
+        margin = int(_CONTAINER_MARGIN * scale)
+        gap = int(_TILE_GAP * scale)
+        self._container.set_margins(margin, margin, margin, margin)
+        self._container.set_spacing(gap, gap)
 
         # The grid is centered as a whole in the available area, the way
         # KDE's Present Windows centers thumbnails in open space rather
@@ -153,6 +164,21 @@ class _OverviewGrid(QWidget):
         lay.addWidget(self._container, stretch=1, alignment=Qt.AlignCenter)
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def set_scale(self, scale: float) -> None:
+        """Update the UI size scale and re-layout tiles.
+
+        Used by :class:`PaletteWindow` to apply a live ``ui_size`` config
+        change (Settings dialog save, no app restart) on the next show.
+        """
+        if scale == self._scale:
+            return
+        self._scale = scale
+        margin = int(_CONTAINER_MARGIN * scale)
+        gap = int(_TILE_GAP * scale)
+        self._container.set_margins(margin, margin, margin, margin)
+        self._container.set_spacing(gap, gap)
+        self._relayout()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
@@ -178,11 +204,14 @@ class _OverviewGrid(QWidget):
         # previous, usually much smaller, layout pass -- the root cause of
         # thumbnails rendering tiny and clustered instead of filling the
         # overview area.
-        avail_w = self.width() - _CONTAINER_MARGIN * 2
-        avail_h = self.height() - _CONTAINER_MARGIN * 2
+        margin = int(_CONTAINER_MARGIN * self._scale)
+        avail_w = self.width() - margin * 2
+        avail_h = self.height() - margin * 2
         if avail_w <= 0 or avail_h <= 0:
             return
-        pw, ph = _compute_tile_size(len(self._entries), avail_w, avail_h)
+        pw, ph = _compute_tile_size(
+            len(self._entries), avail_w, avail_h, self._scale
+        )
         self._rebuild_tiles(pw, ph, avail_w)
 
     def set_entries(
@@ -227,6 +256,7 @@ class _OverviewGrid(QWidget):
                 e.title or e.app_name,
                 preview=pix,
                 preview_size=(pw, ph),
+                scale=self._scale,
             )
             tile._window_entry = e  # type: ignore[attr-defined]
             tile.clicked.connect(lambda t=tile: self._on_tile_clicked(t))
@@ -261,6 +291,7 @@ class PaletteWindow(QWidget):
         self._sources: list = load_sources()
         self._tile_previews_cache: dict[int, QPixmap] = {}
         self._all_windows: list = []  # WindowInfo list for overview filtering
+        self._scale: float = ui_scale(config.ui_size)
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -280,15 +311,6 @@ class PaletteWindow(QWidget):
         self._field.textChanged.connect(self._refresh)
         self._field.returnPressed.connect(self._activate_selected)
         self._field.textChanged.connect(self._reset_selection)
-        # Same solid card background as the thumbnail container (below) so
-        # the field reads as opaque instead of a faint tint over whatever
-        # the translucent window backdrop happens to show.
-        self._field.setStyleSheet(
-            f"QLineEdit{{background:{OVERLAY_PANEL_BG};border:1px solid {OVERLAY_FIELD_BORDER};"
-            f"border-radius:12px;padding:10px 14px;font-size:15px;color:{OVERLAY_TEXT};"
-            f"selection-background-color:{tokens.accent};}}"
-            f"QLineEdit:focus{{border-color:{tokens.accent};}}"
-        )
 
         # --- Results list ---
         # QListWidget is a QFrame subclass, so (unlike a plain QWidget) it
@@ -299,14 +321,6 @@ class PaletteWindow(QWidget):
         self._list.setObjectName("resultsBox")
         self._list.setFocusPolicy(Qt.NoFocus)
         self._list.setUniformItemSizes(True)
-        self._list.setStyleSheet(
-            f"#resultsBox{{background:{OVERLAY_PANEL_BG};border:none;border-radius:12px;"
-            f"outline:0;color:{OVERLAY_TEXT};font-size:13px;padding:6px;}}"
-            "QListWidget::item{padding:6px 8px;border-radius:6px;}"
-            f"QListWidget::item:selected{{background:{tokens.accent};color:{tokens.accent_text};}}"
-            f"QListWidget::item:hover:!selected{{background:{OVERLAY_HOVER};}}"
-        )
-        self._list.setMaximumHeight(160)
         # Pin the list to the top of the body so it stays right below the
         # search field regardless of whether the overview grid is visible.
         # QListWidget's default vertical policy is Expanding; when the
@@ -318,9 +332,8 @@ class PaletteWindow(QWidget):
         self._list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         # --- Overview grid ---
-        self._overview = _OverviewGrid()
+        self._overview = _OverviewGrid(scale=self._scale)
         self._overview.activate_window.connect(self.activate_window)
-
 
         # --- Layout ---
         self._body = QWidget()
@@ -350,7 +363,52 @@ class PaletteWindow(QWidget):
         # behind them so whatever was on screen showed straight through.
         self.setAttribute(Qt.WA_StyledBackground, True)
 
+        # Apply the initial UI size scale (fonts, icon size, list height,
+        # overview grid scale). Re-applied at the top of show_palette() so
+        # a Settings-dialog save (live reload, no restart) takes effect the
+        # next time the palette opens.
+        self._apply_size_scale()
+
         self.hide()
+
+    def _apply_size_scale(self) -> None:
+        """Re-read ``self.config.ui_size`` and apply the scale to fonts,
+        list icon size, list height, and the overview grid.
+
+        Called once from ``__init__`` and again from ``show_palette()`` so
+        a live config reload picks up the new size tier without rebuilding
+        the widget tree.
+        """
+        scale = ui_scale(self.config.ui_size)
+        self._scale = scale
+        tokens = self._tokens
+
+        field_font_px = max(11, round(15 * scale))
+        field_pad_v = max(6, round(10 * scale))
+        field_pad_h = max(10, round(14 * scale))
+        self._field.setStyleSheet(
+            f"QLineEdit{{background:{OVERLAY_PANEL_BG};border:1px solid {OVERLAY_FIELD_BORDER};"
+            f"border-radius:12px;padding:{field_pad_v}px {field_pad_h}px;"
+            f"font-size:{field_font_px}px;color:{OVERLAY_TEXT};"
+            f"selection-background-color:{tokens.accent};}}"
+            f"QLineEdit:focus{{border-color:{tokens.accent};}}"
+        )
+
+        list_font_px = max(10, round(13 * scale))
+        item_pad_v = max(4, round(6 * scale))
+        item_pad_h = max(6, round(8 * scale))
+        self._list.setStyleSheet(
+            f"#resultsBox{{background:{OVERLAY_PANEL_BG};border:none;border-radius:12px;"
+            f"outline:0;color:{OVERLAY_TEXT};font-size:{list_font_px}px;padding:6px;}}"
+            f"QListWidget::item{{padding:{item_pad_v}px {item_pad_h}px;border-radius:6px;}}"
+            f"QListWidget::item:selected{{background:{tokens.accent};color:{tokens.accent_text};}}"
+            f"QListWidget::item:hover:!selected{{background:{OVERLAY_HOVER};}}"
+        )
+        icon_px = max(16, round(20 * scale))
+        self._list.setIconSize(QSize(icon_px, icon_px))
+        self._list.setMaximumHeight(max(80, round(160 * scale)))
+
+        self._overview.set_scale(scale)
 
     def set_providers(
         self,
@@ -363,6 +421,9 @@ class PaletteWindow(QWidget):
     # ---- show / hide ----
 
     def show_palette(self) -> None:
+        # Pick up a live ui_size change from Settings (no app restart) so
+        # the new scale applies the next time the palette opens.
+        self._apply_size_scale()
         self._field.clear()
         self._capture_overview_previews()
         self._refresh("")

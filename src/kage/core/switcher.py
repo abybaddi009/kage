@@ -26,6 +26,7 @@ from .activation import activate_window_reliably
 from .config import Config
 from .mru import MRUTracker, WindowMRUTracker
 from .screens import target_screen
+from .theme import ui_scale
 
 
 # ---------------------------------------------------------------------------
@@ -60,18 +61,18 @@ class _WindowEntry:
 # ---------------------------------------------------------------------------
 
 
-def _with_count_badge(pix: QPixmap, count: int) -> QPixmap:
+def _with_count_badge(pix: QPixmap, count: int, scale: float = 1.0) -> QPixmap:
     """Return a copy of ``pix`` with a window-count badge in the top-right."""
     if pix.isNull():
         return pix
     out = QPixmap(pix)
     text = str(count) if count < 100 else "99+"
     font = QFont()
-    font.setPixelSize(11)
+    font.setPixelSize(max(8, round(11 * scale)))
     font.setBold(True)
     fm = QFontMetrics(font)
-    h = 18
-    w = max(h, fm.horizontalAdvance(text) + 10)
+    h = max(14, round(18 * scale))
+    w = max(h, fm.horizontalAdvance(text) + round(10 * scale))
     rect = QRect(out.width() - w - 3, 3, w, h)
     p = QPainter(out)
     p.setRenderHint(QPainter.Antialiasing)
@@ -107,11 +108,19 @@ class _ItemWidget(QFrame):
         preview: QPixmap | None = None,
         badge_count: int | None = None,
         preview_size: tuple[int, int] = (176, 110),
+        scale: float = 1.0,
     ) -> None:
         super().__init__()
         self._selected = False
         self.setObjectName("switcherItem")
         has_preview = preview is not None and not preview.isNull()
+
+        app_icon_px = max(24, round(64 * scale))
+        inline_icon_px = max(12, round(16 * scale))
+        text_width = max(72, round(96 * scale))
+        font_pt = max(8, round(11 * scale))
+        w_overhead = round(20 * scale)
+        h_overhead = round(42 * scale)
 
         image_lbl = QLabel()
         image_lbl.setAlignment(Qt.AlignCenter)
@@ -121,23 +130,24 @@ class _ItemWidget(QFrame):
                 *preview_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             if badge_count:
-                pix = _with_count_badge(pix, badge_count)
+                pix = _with_count_badge(pix, badge_count, scale)
             image_lbl.setPixmap(pix)
-            text_width = preview_size[0]
         else:
             pix = QPixmap(icon_path) if icon_path else QPixmap()
             if not pix.isNull():
-                pix = pix.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pix = pix.scaled(
+                    app_icon_px, app_icon_px,
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                )
                 if badge_count:
-                    pix = _with_count_badge(pix, badge_count)
+                    pix = _with_count_badge(pix, badge_count, scale)
                 image_lbl.setPixmap(pix)
             else:
-                image_lbl.setFixedSize(64, 64)
+                image_lbl.setFixedSize(app_icon_px, app_icon_px)
                 image_lbl.setText("▢")
-            text_width = 96
 
         f = QFont()
-        f.setPointSize(11)
+        f.setPointSize(font_pt)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
@@ -151,17 +161,18 @@ class _ItemWidget(QFrame):
             title_row.setSpacing(4)
             title_row.addStretch(1)
 
-            text_avail = text_width
+            text_avail = preview_size[0]
             icon_pix = QPixmap(icon_path) if icon_path else QPixmap()
             if not icon_pix.isNull():
                 icon_lbl = QLabel()
                 icon_lbl.setPixmap(
                     icon_pix.scaled(
-                        16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                        inline_icon_px, inline_icon_px,
+                        Qt.KeepAspectRatio, Qt.SmoothTransformation,
                     )
                 )
                 title_row.addWidget(icon_lbl)
-                text_avail -= 20
+                text_avail -= inline_icon_px + 4
 
             text_lbl = QLabel(QFontMetrics(f).elidedText(label, Qt.ElideMiddle, text_avail))
             text_lbl.setFont(f)
@@ -178,9 +189,9 @@ class _ItemWidget(QFrame):
             lay.addWidget(text_lbl)
 
         if has_preview:
-            self.setFixedSize(preview_size[0] + 20, preview_size[1] + 42)
+            self.setFixedSize(preview_size[0] + w_overhead, preview_size[1] + h_overhead)
         else:
-            self.setFixedSize(108, 110)
+            self.setFixedSize(max(72, round(108 * scale)), max(72, round(110 * scale)))
         self._update_style()
 
     def set_selected(self, on: bool) -> None:
@@ -312,6 +323,7 @@ class SwitcherOverlay(QWidget):
         self._window_provider: WindowProvider | None = None
         self._tile_previews: dict[int, QPixmap] = {}
         self._max_content_width: int = 10_000
+        self._scale: float = 1.0
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -357,6 +369,27 @@ class SwitcherOverlay(QWidget):
         self._screen_preference = preference
         self._window_provider = window_provider
 
+    def set_size_scale(self, scale: float) -> None:
+        """Apply a UI size scale (tile icons/text, preview label, spacing).
+
+        Stores the scale so subsequent ``_rebuild()`` passes thread it into
+        every :class:`_ItemWidget`, and resizes the live preview label plus
+        container margins/spacing. Rebuilds tiles immediately if entries
+        already exist so the change is visible without a re-trigger.
+        """
+        if scale == self._scale:
+            return
+        self._scale = scale
+        self._preview_label.setFixedSize(
+            max(200, round(480 * scale)), max(112, round(270 * scale))
+        )
+        m = max(6, round(12 * scale))
+        s = max(4, round(8 * scale))
+        self._container.set_margins(m, m, m, m)
+        self._container.set_spacing(s, s)
+        if self._entries:
+            self._rebuild()
+
     def set_apps(
         self,
         entries: list[_AppEntry],
@@ -383,6 +416,10 @@ class SwitcherOverlay(QWidget):
 
     def _rebuild(self) -> None:
         tiles: list[_ItemWidget] = []
+        scaled_preview_size = (
+            max(72, round(176 * self._scale)),
+            max(45, round(110 * self._scale)),
+        )
         for e in self._entries:
             preview = None
             if self._theme == "window_previews":
@@ -395,9 +432,17 @@ class SwitcherOverlay(QWidget):
                     e.name,
                     preview=preview,
                     badge_count=e.window_count or None,
+                    preview_size=scaled_preview_size,
+                    scale=self._scale,
                 )
             else:
-                tile = _ItemWidget(e.icon_path, e.title or e.app_name, preview=preview)
+                tile = _ItemWidget(
+                    e.icon_path,
+                    e.title or e.app_name,
+                    preview=preview,
+                    preview_size=scaled_preview_size,
+                    scale=self._scale,
+                )
             tiles.append(tile)
         self._container.set_tiles(tiles)
         # Re-apply the screen-derived width constraint now that the tiles
@@ -530,6 +575,9 @@ class SwitcherController(QObject):
         self._mode = mode
         self.config = config
         self.overlay = SwitcherOverlay()
+        self.overlay.set_size_scale(
+            ui_scale(config.ui_size) if config is not None else 1.0
+        )
         self.overlay.activate_app.connect(self._on_activate_app)
         self.overlay.activate_window.connect(self._on_activate_window)
 
@@ -636,6 +684,10 @@ class SwitcherController(QObject):
         show_previews = bool(self.config.switcher.show_previews) if self.config else False
         theme = self.config.switcher.theme if self.config else "default"
         expand = bool(self.config.switcher.expand_windows) if self.config else False
+        # Re-apply the UI size scale on every trigger so a live Settings
+        # save (no app restart) takes effect on the next Alt+Tab.
+        if self.config is not None:
+            self.overlay.set_size_scale(ui_scale(self.config.ui_size))
         self.overlay.set_theme(theme)
         self.overlay.set_screen_preference(
             self.config.screen_preference if self.config else "active", self._wp

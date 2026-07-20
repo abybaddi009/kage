@@ -19,6 +19,7 @@ import sys
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -53,6 +54,13 @@ _SWITCHER_THEMES = [
 _SCREEN_PREFERENCES = [
     ("active", "Active Screen"),
     ("pointer", "Screen with Pointer"),
+]
+
+# (config value, display label) -- keep in sync with UI_SIZES in config.py.
+_UI_SIZES = [
+    ("small", "Small"),
+    ("medium", "Medium"),
+    ("large", "Large"),
 ]
 
 # Sidebar sections: (title, icon glyph, icon tile color). Glyphs use the
@@ -194,6 +202,73 @@ def _chord_row(initial: str) -> tuple[QWidget, ChordCaptureEdit]:
     layout.addWidget(button)
     row.setFixedWidth(270)
     return row, edit
+
+
+class _SegmentedControl(QWidget):
+    """A macOS-style segmented control: checkable toggle buttons in a
+    single joined row, exactly one active at a time (exclusive radio group).
+
+    ``value()`` returns the config value of the currently-checked button.
+    Used for the UI Size picker so the user gets three joined buttons
+    (Small | Medium | Large) instead of a dropdown.
+    """
+
+    value_changed = Signal(str)
+
+    def __init__(self, options: list[tuple[str, str]], current: str, parent=None) -> None:
+        super().__init__(parent)
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._button_values: dict[QPushButton, str] = {}
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        tokens = _Tokens()
+        for i, (value, label) in enumerate(options):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setProperty("value", value)
+            # Joined-segment styling: shared border, no internal rounding so
+            # adjacent buttons form one continuous pill; the checked state
+            # uses the accent color so selection matches the rest of the app.
+            left_r = 6 if i == 0 else 0
+            right_r = 6 if i == len(options) - 1 else 0
+            btn.setStyleSheet(
+                "QPushButton{"
+                f"background:{tokens.card_bg};"
+                f"border:1px solid {tokens.card_border};"
+                f"border-left-width:{0 if i > 0 else 1}px;"
+                f"border-top-left-radius:{left_r}px;"
+                f"border-bottom-left-radius:{left_r}px;"
+                f"border-top-right-radius:{right_r}px;"
+                f"border-bottom-right-radius:{right_r}px;"
+                "padding:6px 14px;"
+                "font-size:12px;"
+                "min-width:60px;"
+                "}"
+                f"QPushButton:checked{{background:{tokens.accent};color:#ffffff;border-color:{tokens.accent};}}"
+                "QPushButton:hover:!checked{background:" + tokens.hover + ";}"
+            )
+            if value == current:
+                btn.setChecked(True)
+            self._group.addButton(btn)
+            self._button_values[btn] = value
+            lay.addWidget(btn)
+
+        self._group.buttonToggled.connect(self._on_toggled)
+
+    def _on_toggled(self, button: QPushButton, checked: bool) -> None:
+        if checked:
+            self.value_changed.emit(self._button_values[button])
+
+    def value(self) -> str:
+        btn = self._group.checkedButton()
+        if btn is None:
+            return ""
+        return self._button_values.get(btn, "")
 
 
 def _section_icon(glyph: str, color: str) -> QIcon:
@@ -467,6 +542,9 @@ class SettingsDialog(QDialog):
         self._screen_preference.setCurrentIndex(idx if idx >= 0 else 0)
         general.add_row("Open launcher and switcher on", self._screen_preference)
 
+        self._ui_size = _SegmentedControl(_UI_SIZES, config.ui_size)
+        general.add_row("UI size", self._ui_size)
+
         self._max_results = QSpinBox()
         self._max_results.setRange(1, 100)
         self._max_results.setValue(config.palette.max_results)
@@ -681,6 +759,7 @@ class SettingsDialog(QDialog):
         cfg.switcher.show_previews = self._show_previews.isChecked()
         cfg.switcher.theme = self._theme_picker.value()
         cfg.screen_preference = self._screen_preference.currentData()
+        cfg.ui_size = self._ui_size.value() or "small"
         try:
             save_config(cfg)
         except Exception as exc:  # pragma: no cover - filesystem error

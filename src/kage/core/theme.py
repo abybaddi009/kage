@@ -52,3 +52,20 @@ OVERLAY_HOVER = "rgba(255,255,255,12%)"
 OVERLAY_SEPARATOR = "rgba(255,255,255,10%)"
 OVERLAY_TEXT = "#e5e7eb"
 OVERLAY_MUTED = "#9ca3af"
+
+
+# ---------------------------------------------------------------------------
+# UI size tiers: multipliers applied to base tile/icon/text sizes in the
+# launcher palette (src/kage/core/palette.py) and the switcher overlay
+# (src/kage/core/switcher.py). "small" is the historical default sizing.
+# Keep in sync with UI_SIZES in config.py.
+UI_SIZE_SCALES = {
+    "small": 1.0,
+    "medium": 1.2,
+    "large": 1.4,
+}
+
+
+def ui_scale(level: str) -> float:
+    """Return the scale factor for a UI size tier (falls back to 1.0)."""
+    return UI_SIZE_SCALES.get(level, 1.0)
