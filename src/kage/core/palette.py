@@ -283,6 +283,7 @@ class _OverviewGrid(QWidget):
                 )
                 tile._signature = signature  # type: ignore[attr-defined]
                 tile.clicked.connect(lambda t=tile: self._on_tile_clicked(t))
+                tile.hovered.connect(lambda wid=e.window_id: self.highlight_window(wid))
             tile._window_entry = e  # type: ignore[attr-defined]
             new_cache[e.window_id] = tile
             tiles.append(tile)

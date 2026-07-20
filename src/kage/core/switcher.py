@@ -123,9 +123,12 @@ class _ItemWidget(QFrame):
 
     Emits :pyattr:`clicked` on a left-button press so the launcher palette
     can use the same tiles as the switcher overlay for its overview grid.
+    Emits :pyattr:`hovered` on mouse enter so the switcher overlay can
+    move its selection to whichever tile the pointer is over.
     """
 
     clicked = Signal()
+    hovered = Signal()
 
     def __init__(
         self,
@@ -219,6 +222,10 @@ class _ItemWidget(QFrame):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
+
+    def enterEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.hovered.emit()
+        super().enterEvent(event)
 
     def _update_style(self) -> None:
         if self._selected:
@@ -337,6 +344,7 @@ class _FlowContainer(QFrame):
 class SwitcherOverlay(QWidget):
     activate_app = Signal(str)  # bundle_id (or app key when no bundle id)
     activate_window = Signal(int)  # window_id
+    selection_changed = Signal()  # emitted when the highlighted tile changes
 
     def __init__(self) -> None:
         super().__init__()
@@ -469,6 +477,9 @@ class SwitcherOverlay(QWidget):
                     preview_size=scaled_preview_size,
                     scale=self._scale,
                 )
+            index = len(tiles)
+            tile.clicked.connect(lambda _=False, i=index: self._on_tile_clicked(i))
+            tile.hovered.connect(lambda i=index: self._on_tile_hovered(i))
             tiles.append(tile)
         self._container.set_tiles(tiles)
         # Re-apply the screen-derived width constraint now that the tiles
@@ -482,6 +493,18 @@ class SwitcherOverlay(QWidget):
             w = self._container.tile(i)
             if isinstance(w, _ItemWidget):
                 w.set_selected(i == index)
+
+    def _on_tile_hovered(self, index: int) -> None:
+        """Move the selection to the tile under the pointer (mouse hover)."""
+        if 0 <= index < len(self._entries) and index != self._index:
+            self._select(index)
+            self.selection_changed.emit()
+
+    def _on_tile_clicked(self, index: int) -> None:
+        """Activate the clicked tile directly."""
+        if 0 <= index < len(self._entries):
+            self._select(index)
+            self.commit()
 
     def current_entry(self):
         if not self._entries:
@@ -606,6 +629,7 @@ class SwitcherController(QObject):
         )
         self.overlay.activate_app.connect(self._on_activate_app)
         self.overlay.activate_window.connect(self._on_activate_window)
+        self.overlay.selection_changed.connect(self._update_preview)
 
     # ---- build entries ----
 
