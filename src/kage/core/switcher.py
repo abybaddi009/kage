@@ -61,6 +61,32 @@ class _WindowEntry:
 # ---------------------------------------------------------------------------
 
 
+_icon_pixmap_cache: dict[tuple[str, int], QPixmap] = {}
+
+
+def _cached_scaled_icon(icon_path: str | None, size: int) -> QPixmap:
+    """Return ``icon_path`` decoded and scaled to ``size``, cached by path+size.
+
+    Tile construction reloads and rescales the same handful of app icons on
+    every keystroke (results list + overview grid rebuild); caching avoids
+    repeating the disk read and ``SmoothTransformation`` scale for icons
+    that never change.
+    """
+    if not icon_path:
+        return QPixmap()
+    key = (icon_path, size)
+    pix = _icon_pixmap_cache.get(key)
+    if pix is None:
+        raw = QPixmap(icon_path)
+        pix = (
+            raw.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            if not raw.isNull()
+            else raw
+        )
+        _icon_pixmap_cache[key] = pix
+    return pix
+
+
 def _with_count_badge(pix: QPixmap, count: int, scale: float = 1.0) -> QPixmap:
     """Return a copy of ``pix`` with a window-count badge in the top-right."""
     if pix.isNull():
@@ -133,12 +159,8 @@ class _ItemWidget(QFrame):
                 pix = _with_count_badge(pix, badge_count, scale)
             image_lbl.setPixmap(pix)
         else:
-            pix = QPixmap(icon_path) if icon_path else QPixmap()
+            pix = _cached_scaled_icon(icon_path, app_icon_px)
             if not pix.isNull():
-                pix = pix.scaled(
-                    app_icon_px, app_icon_px,
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation,
-                )
                 if badge_count:
                     pix = _with_count_badge(pix, badge_count, scale)
                 image_lbl.setPixmap(pix)
@@ -162,15 +184,10 @@ class _ItemWidget(QFrame):
             title_row.addStretch(1)
 
             text_avail = preview_size[0]
-            icon_pix = QPixmap(icon_path) if icon_path else QPixmap()
+            icon_pix = _cached_scaled_icon(icon_path, inline_icon_px)
             if not icon_pix.isNull():
                 icon_lbl = QLabel()
-                icon_lbl.setPixmap(
-                    icon_pix.scaled(
-                        inline_icon_px, inline_icon_px,
-                        Qt.KeepAspectRatio, Qt.SmoothTransformation,
-                    )
-                )
+                icon_lbl.setPixmap(icon_pix)
                 title_row.addWidget(icon_lbl)
                 text_avail -= inline_icon_px + 4
 
@@ -235,12 +252,21 @@ class _FlowContainer(QFrame):
         self._margins = (12, 12, 12, 12)
 
     def set_tiles(self, tiles: list[_ItemWidget]) -> None:
+        """Replace the tile set, reusing any widgets present in both lists.
+
+        Callers (the overview grid) may pass back tiles they kept from the
+        previous call rather than rebuilding every entry from scratch; only
+        tiles that actually dropped out get torn down here.
+        """
+        new_ids = {id(t) for t in tiles}
         for t in self._tiles:
-            t.setParent(None)
-            t.deleteLater()
+            if id(t) not in new_ids:
+                t.setParent(None)
+                t.deleteLater()
         self._tiles = list(tiles)
         for t in self._tiles:
-            t.setParent(self)
+            if t.parent() is not self:
+                t.setParent(self)
             t.show()
         self._relayout()
 

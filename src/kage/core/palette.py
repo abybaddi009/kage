@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFontMetrics, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -146,6 +146,12 @@ class _OverviewGrid(QWidget):
         self._entries: list[_WindowEntry] = []
         self._previews: dict[int, QPixmap] = {}
         self._scale = scale
+        # window_id -> tile, kept across rebuilds so filtering as the user
+        # types reuses existing tiles instead of destroying and
+        # reconstructing every one (each construction re-scales pixmaps and
+        # builds a widget tree, which was the actual per-keystroke cost).
+        self._tile_cache: dict[int, _ItemWidget] = {}
+        self._tile_size: tuple[int, int] | None = None
         self._container = _FlowContainer()
         self._container.setObjectName("overviewBox")
         self._container.setStyleSheet(
@@ -227,6 +233,8 @@ class _OverviewGrid(QWidget):
     def clear(self) -> None:
         self._entries = []
         self._previews = {}
+        self._tile_cache = {}
+        self._tile_size = None
         self._container.clear()
 
     def is_empty(self) -> bool:
@@ -248,19 +256,37 @@ class _OverviewGrid(QWidget):
             tile.set_selected(wid == window_id)
 
     def _rebuild_tiles(self, pw: int, ph: int, avail_w: int) -> None:
+        # A tile's dimensions are baked into its layout at construction time
+        # (see ``_ItemWidget.__init__``), so a size change invalidates every
+        # cached tile; otherwise entries unchanged since the last rebuild
+        # (the common case: filtering as-you-type on a stable window list)
+        # reuse their existing widget instead of being reconstructed.
+        if (pw, ph) != self._tile_size:
+            self._tile_cache = {}
+            self._tile_size = (pw, ph)
+        old_cache = self._tile_cache
+        new_cache: dict[int, _ItemWidget] = {}
         tiles: list[_ItemWidget] = []
         for e in self._entries:
             pix = self._previews.get(e.window_id)
-            tile = _ItemWidget(
-                e.icon_path,
-                e.title or e.app_name,
-                preview=pix,
-                preview_size=(pw, ph),
-                scale=self._scale,
-            )
+            signature = (e.title, e.icon_path, id(pix))
+            cached = old_cache.get(e.window_id)
+            if cached is not None and getattr(cached, "_signature", None) == signature:
+                tile = cached
+            else:
+                tile = _ItemWidget(
+                    e.icon_path,
+                    e.title or e.app_name,
+                    preview=pix,
+                    preview_size=(pw, ph),
+                    scale=self._scale,
+                )
+                tile._signature = signature  # type: ignore[attr-defined]
+                tile.clicked.connect(lambda t=tile: self._on_tile_clicked(t))
             tile._window_entry = e  # type: ignore[attr-defined]
-            tile.clicked.connect(lambda t=tile: self._on_tile_clicked(t))
+            new_cache[e.window_id] = tile
             tiles.append(tile)
+        self._tile_cache = new_cache
         # Wrap rows against the real available width, not the container's
         # own (self-sizing) current width -- see the note in ``_relayout``.
         self._container.set_max_content_width(avail_w)
@@ -292,6 +318,15 @@ class PaletteWindow(QWidget):
         self._tile_previews_cache: dict[int, QPixmap] = {}
         self._all_windows: list = []  # WindowInfo list for overview filtering
         self._scale: float = ui_scale(config.ui_size)
+        self._icon_cache: dict[str, QIcon] = {}
+        self._pending_query: str = ""
+        # Filtering rebuilds the results list and overview grid, so a fast
+        # typist firing textChanged on every keystroke was doing that work
+        # once per character. Coalesce bursts into one refresh a beat later.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(30)
+        self._refresh_timer.timeout.connect(lambda: self._refresh(self._pending_query))
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -308,7 +343,7 @@ class PaletteWindow(QWidget):
         self._field = QLineEdit()
         self._field.setPlaceholderText("Search windows and applications…")
         self._field.setClearButtonEnabled(True)
-        self._field.textChanged.connect(self._refresh)
+        self._field.textChanged.connect(self._schedule_refresh)
         self._field.returnPressed.connect(self._activate_selected)
         self._field.textChanged.connect(self._reset_selection)
 
@@ -426,6 +461,7 @@ class PaletteWindow(QWidget):
         self._apply_size_scale()
         self._field.clear()
         self._capture_overview_previews()
+        self._refresh_timer.stop()
         self._refresh("")
         current = self.screen() if hasattr(self, "screen") else None
         screen = target_screen(
@@ -454,6 +490,7 @@ class PaletteWindow(QWidget):
         self._field.setFocus()
 
     def hide_palette(self) -> None:
+        self._refresh_timer.stop()
         self.hide()
 
     # ---- events ----
@@ -524,6 +561,20 @@ class PaletteWindow(QWidget):
 
     # ---- refresh ----
 
+    def _schedule_refresh(self, text: str) -> None:
+        self._pending_query = text
+        self._refresh_timer.start()
+
+    def _icon_for_path(self, path: str) -> QIcon | None:
+        icon = self._icon_cache.get(path)
+        if icon is None:
+            pix = QPixmap(path)
+            if pix.isNull():
+                return None
+            icon = QIcon(pix)
+            self._icon_cache[path] = icon
+        return icon
+
     def _refresh(self, text: str) -> None:
         if self._window_provider is None or self._app_provider is None:
             return
@@ -547,9 +598,9 @@ class PaletteWindow(QWidget):
             item = QListWidgetItem(r.name)
             item.setToolTip(r.subtitle)
             if r.icon_path:
-                pix = QPixmap(r.icon_path)
-                if not pix.isNull():
-                    item.setIcon(QIcon(pix))
+                icon = self._icon_for_path(r.icon_path)
+                if icon is not None:
+                    item.setIcon(icon)
             item.setData(Qt.UserRole, r.name)
             self._list.addItem(item)
         if self._results:
