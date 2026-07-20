@@ -86,13 +86,14 @@ def match(
     win_results.sort(key=lambda r: r.score, reverse=True)
     app_results.sort(key=lambda r: r.score, reverse=True)
 
-    if cfg.windows_first:
+    # When the user is actively searching, rank strictly by relevance so a
+    # high-scoring unlaunched app (e.g. "Docker") isn't buried under
+    # loosely-matching open windows. With no query, honor windows_first so
+    # open windows stay on top during the default browse experience.
+    if not q and cfg.windows_first:
         merged = win_results + app_results
     else:
         merged = sorted(
             win_results + app_results, key=lambda r: r.score, reverse=True
         )
-    if q == "":
-        # No query: show open windows first then a handful of apps.
-        return merged[: cfg.max_results]
     return merged[: cfg.max_results]

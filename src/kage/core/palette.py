@@ -307,6 +307,15 @@ class PaletteWindow(QWidget):
             f"QListWidget::item:hover:!selected{{background:{OVERLAY_HOVER};}}"
         )
         self._list.setMaximumHeight(160)
+        # Pin the list to the top of the body so it stays right below the
+        # search field regardless of whether the overview grid is visible.
+        # QListWidget's default vertical policy is Expanding; when the
+        # overview is hidden that makes the layout allocate the full body
+        # height to the list, and Qt then centers the (capped-at-160) widget
+        # within that cell -- causing the results to float mid-screen.
+        # Maximum tells the layout not to grow the list, so leftover space
+        # falls to the bottom instead.
+        self._list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         # --- Overview grid ---
         self._overview = _OverviewGrid()
@@ -318,8 +327,9 @@ class PaletteWindow(QWidget):
         body_lay = QVBoxLayout(self._body)
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(10)
-        body_lay.addWidget(self._list)
+        body_lay.addWidget(self._list, alignment=Qt.AlignTop)
         body_lay.addWidget(self._overview, stretch=1)
+        body_lay.addStretch(1)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
