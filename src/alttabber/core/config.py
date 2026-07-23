@@ -80,6 +80,12 @@ class Config:
     # UI size tier: scales tile/icon/text size in the palette overview grid
     # and the Alt-Tab switcher. One of UI_SIZES.
     ui_size: str = "small"
+    # Window-title substrings to hide from the switcher, palette, and overview.
+    # Case-insensitive: a window is hidden if its title contains any entry.
+    # Useful for the internal helper "windows" some toolkits register (e.g.
+    # Eclipse/SWT's "PartRenderingEngine's limbo" shell that backs DBeaver).
+    # Empty by default -- users add their own entries via Settings.
+    excluded_window_titles: list[str] = field(default_factory=list)
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -130,6 +136,10 @@ def _merge(cfg: Config, data: dict) -> Config:
         cfg.screen_preference = str(data["screen_preference"])
     if "ui_size" in data and str(data["ui_size"]) in UI_SIZES:
         cfg.ui_size = str(data["ui_size"])
+    if isinstance(data.get("excluded_window_titles"), list):
+        cfg.excluded_window_titles = [
+            str(t) for t in data["excluded_window_titles"] if str(t).strip()
+        ]
     return cfg
 
 
@@ -143,6 +153,9 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
         f'screen_preference = {_toml_str(cfg.screen_preference)}',
         f'ui_size = {_toml_str(cfg.ui_size)}',
+        "excluded_window_titles = ["
+        + ", ".join(_toml_str(t) for t in cfg.excluded_window_titles)
+        + "]",
         "",
         "[hotkeys]",
         f'launcher = {_toml_str(cfg.hotkeys.launcher)}',

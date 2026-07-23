@@ -569,6 +569,16 @@ class SwitcherOverlay(QWidget):
     # ---- show / hide ----
 
     def show_overlay(self) -> None:
+        # Collection behavior must be set before positioning/showing:
+        # flipping CanJoinAllSpaces on an already-positioned NSWindow makes
+        # AppKit snap it onto the current main screen, discarding the frame.
+        # The window *level* is applied after show() instead (Qt resets the
+        # level during show) -- see raise_to_overlay_level().
+        fullscreen = False
+        if sys.platform == "darwin":
+            from ..platform.macos.overlay import prepare_for_fullscreen
+
+            fullscreen = prepare_for_fullscreen(self)
         current = self.screen() if hasattr(self, "screen") else None
         screen = target_screen(self._screen_preference, current, self._window_provider)
         if screen is not None:
@@ -581,16 +591,27 @@ class SwitcherOverlay(QWidget):
             self._container.set_max_content_width(self._max_content_width)
             self.adjustSize()
             x = sg.center().x() - self.width() // 2
-            y = int(sg.center().y() * 0.4) - self.height() // 2
+            # 40% down from *this screen's own* top edge, not 40% of the
+            # absolute Y coordinate -- ``sg.center().y()`` already includes
+            # the screen's own offset (nonzero for any monitor that isn't
+            # positioned at the virtual desktop's top edge), so scaling that
+            # absolute value directly could place the strip above the
+            # screen's actual top edge on such monitors. Qt then rejects the
+            # resulting geometry as being outside any known screen and
+            # silently falls back to the primary display.
+            y = sg.y() + int(sg.height() * 0.4) - self.height() // 2
             self.move(x, y)
         else:
             self.adjustSize()
         self.show()
         self.raise_()
-        if sys.platform == "darwin":
-            from ..platform.macos.overlay import raise_above_fullscreen
+        # After show(): Qt has (re)set the window level from the window
+        # flags, so re-assert the above-fullscreen level now, or the overlay
+        # stays below the fullscreen app's Space and never appears over it.
+        if fullscreen:
+            from ..platform.macos.overlay import raise_to_overlay_level
 
-            raise_above_fullscreen(self)
+            raise_to_overlay_level(self)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:

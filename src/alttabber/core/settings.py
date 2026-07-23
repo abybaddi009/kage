@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QStackedWidget,
@@ -621,6 +622,26 @@ class SettingsDialog(QDialog):
         switcher.add_row(
             "Show a live preview while switching", self._show_previews
         )
+
+        # Hidden-windows editor: one title substring per line. A window is
+        # hidden from the switcher, palette, and overview if its title
+        # contains any entry (case-insensitive). Handy for toolkit helper
+        # windows like Eclipse/SWT's "PartRenderingEngine's limbo".
+        switcher.new_card()
+        excl_box = QWidget()
+        excl_lay = QVBoxLayout(excl_box)
+        excl_lay.setContentsMargins(0, 6, 0, 6)
+        excl_lay.setSpacing(6)
+        excl_hint = QLabel("Hide windows whose title contains (one per line):")
+        excl_hint.setObjectName("muted")
+        excl_hint.setWordWrap(True)
+        self._excluded_titles = QPlainTextEdit()
+        self._excluded_titles.setPlainText("\n".join(config.excluded_window_titles))
+        self._excluded_titles.setPlaceholderText("e.g. PartRenderingEngine's limbo")
+        self._excluded_titles.setFixedHeight(78)
+        excl_lay.addWidget(excl_hint)
+        excl_lay.addWidget(self._excluded_titles)
+        switcher.add_full(excl_box)
         switcher.add_stretch()
 
         # ---- Shortcuts page ----
@@ -789,6 +810,11 @@ class SettingsDialog(QDialog):
         cfg.switcher.theme = self._theme_picker.value()
         cfg.screen_preference = self._screen_preference.currentData()
         cfg.ui_size = self._ui_size.value() or "small"
+        cfg.excluded_window_titles = [
+            ln.strip()
+            for ln in self._excluded_titles.toPlainText().splitlines()
+            if ln.strip()
+        ]
         try:
             save_config(cfg)
         except Exception as exc:  # pragma: no cover - filesystem error

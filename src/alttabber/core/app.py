@@ -127,6 +127,7 @@ class AltTabberApp(QObject):
             from ..platform.macos.hotkeys import MacHotkeyProvider
 
             self._window_provider = MacWindowProvider()
+            self._window_provider.set_excluded_titles(self.config.excluded_window_titles)
             self._app_provider = MacAppProvider()
             self._hotkey_provider = MacHotkeyProvider()
         else:
@@ -269,6 +270,10 @@ class AltTabberApp(QObject):
             self._app_switcher.config = self.config
         if self._window_switcher is not None:
             self._window_switcher.config = self.config
+        if self._window_provider is not None and hasattr(
+            self._window_provider, "set_excluded_titles"
+        ):
+            self._window_provider.set_excluded_titles(self.config.excluded_window_titles)
         self.config_changed.emit()
         if self._tray is not None:
             self._tray.show_message("Alt-Tabber", "Configuration reloaded.")

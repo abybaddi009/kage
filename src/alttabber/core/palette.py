@@ -501,6 +501,16 @@ class PaletteWindow(QWidget):
     # ---- show / hide ----
 
     def show_palette(self) -> None:
+        # Collection behavior must be set before positioning/showing:
+        # flipping CanJoinAllSpaces on an already-positioned NSWindow makes
+        # AppKit snap it onto the current main screen, discarding the frame.
+        # The window *level* is applied after show() instead (Qt resets the
+        # level during show) -- see raise_to_overlay_level().
+        fullscreen = False
+        if sys.platform == "darwin":
+            from ..platform.macos.overlay import prepare_for_fullscreen
+
+            fullscreen = prepare_for_fullscreen(self)
         # Pick up a live ui_size change from Settings (no app restart) so
         # the new scale applies the next time the palette opens.
         self._apply_size_scale()
@@ -534,12 +544,15 @@ class PaletteWindow(QWidget):
         self._overview.set_hover_armed(False)
         self.show()
         self.raise_()
-        if sys.platform == "darwin":
-            from ..platform.macos.overlay import raise_above_fullscreen
-
-            raise_above_fullscreen(self)
         self.activateWindow()
         self._field.setFocus()
+        # After show(): Qt has (re)set the window level from the window
+        # flags, so re-assert the above-fullscreen level now, or the palette
+        # stays below the fullscreen app's Space and never appears over it.
+        if fullscreen:
+            from ..platform.macos.overlay import raise_to_overlay_level
+
+            raise_to_overlay_level(self)
 
     def hide_palette(self) -> None:
         self._refresh_timer.stop()

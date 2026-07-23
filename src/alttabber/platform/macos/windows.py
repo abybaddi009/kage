@@ -107,6 +107,28 @@ class MacWindowProvider(WindowProvider):
         self._ax_counter = 0
         self._windows_cache: list[WindowInfo] | None = None
         self._windows_cache_at: float = 0.0
+        # Lower-cased title substrings to hide (from Config.excluded_window_titles,
+        # set by the app on load/reload). A window is dropped if its title
+        # contains any of these -- see _apply_exclusions().
+        self._excluded_titles: list[str] = []
+
+    def set_excluded_titles(self, titles: list[str]) -> None:
+        """Replace the window-title exclusion patterns (case-insensitive)."""
+        self._excluded_titles = [t.strip().lower() for t in titles if t.strip()]
+        # Drop the cache so the new patterns take effect on the next enumeration.
+        self._windows_cache = None
+
+    def _apply_exclusions(self, windows: list[WindowInfo]) -> list[WindowInfo]:
+        """Drop windows whose title contains any configured exclusion pattern."""
+        if not self._excluded_titles:
+            return windows
+        out = []
+        for w in windows:
+            title = (w.window_title or "").lower()
+            if any(pat in title for pat in self._excluded_titles):
+                continue
+            out.append(w)
+        return out
 
     # AX enumeration is a round trip per running app (~15 apps took ~0.75s
     # in testing), which is fine once but far too slow to redo on every
@@ -120,8 +142,17 @@ class MacWindowProvider(WindowProvider):
 
         CGWindowListCopyWindowInfo only reports windows the compositor is
         actively drawing, which silently excludes minimized windows. AX's
-        per-app window list has no such restriction, so it's the source of
-        truth here; minimized windows come back with is_minimized=True.
+        per-app window list has no such restriction, so it's the primary
+        source here; minimized windows come back with is_minimized=True.
+
+        AX enumeration of a *background* app's windows is unreliable while
+        any app is in native fullscreen -- most reliably it drops the
+        fullscreen window itself once its owning app stops being frontmost,
+        but it can also silently return an incomplete/empty list for other,
+        unrelated background apps while some app elsewhere is fullscreen.
+        ``_cg_supplement()`` fills in anything CGWindowList can see (the
+        window server's own compositing list, which doesn't share this AX
+        blind spot) that the AX pass above missed.
         """
         import time
 
@@ -137,6 +168,7 @@ class MacWindowProvider(WindowProvider):
             return []
         NSRunningApplication, NSWorkspace = _import_cocoa()
         out: list[WindowInfo] = []
+        known_apps: dict[int, tuple[str, str | None]] = {}
         for app in NSWorkspace.sharedWorkspace().runningApplications():
             try:
                 if app.activationPolicy() != NSApplicationActivationPolicyRegular:
@@ -146,10 +178,95 @@ class MacWindowProvider(WindowProvider):
             pid = int(app.processIdentifier())
             bundle_id = str(app.bundleIdentifier()) if app.bundleIdentifier() else None
             name = str(app.localizedName()) if app.localizedName() else (bundle_id or "App")
+            known_apps[pid] = (name, bundle_id)
             out.extend(self._ax_windows(pid, app_name=name, bundle_id=bundle_id))
+        out.extend(self._cg_supplement(out, known_apps))
+        out = self._apply_exclusions(out)
         self._windows_cache = out
         self._windows_cache_at = now
         return out
+
+    def _cg_supplement(
+        self,
+        existing: list[WindowInfo],
+        known_apps: dict[int, tuple[str, str | None]],
+    ) -> list[WindowInfo]:
+        """Return windows CGWindowList sees that the AX pass missed.
+
+        Only fills gaps -- ``existing`` (AX) stays the source of truth for
+        anything it did find, since only it can supply an AX ref for raise
+        and minimized-window info. Entries added here have no AX ref, so
+        activation falls back to the pid/title-based raise path (and
+        ultimately to whole-app activation) -- see ``activate_window()``.
+        """
+        try:
+            from Quartz import (  # type: ignore
+                CGWindowListCopyWindowInfo,
+                kCGWindowListOptionAll,
+                kCGNullWindowID,
+            )
+        except ImportError:
+            return []
+        # kCGWindowListOptionAll, *not* ...OnScreenOnly: while an app is in
+        # native fullscreen, every other app's windows live on a different
+        # Space, so the on-screen list reports only the fullscreen Space's
+        # own windows and backfills nothing -- exactly the windows AX also
+        # goes blind on. The All list is the only source that still sees
+        # windows across Spaces in that state.
+        info_list = CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID)
+        if not info_list:
+            return []
+        # Dedup against AX both by CGWindowID and by (pid, title): a
+        # minimized window AX reported under a synthetic negative id (it
+        # couldn't resolve a CGWindowID for it) would otherwise reappear
+        # here under its real positive id as a bogus non-minimized duplicate.
+        seen_ids = {w.window_id for w in existing}
+        seen_pid_title = {(w.pid, (w.window_title or "").strip()) for w in existing}
+        extra: list[WindowInfo] = []
+        for info in info_list:
+            if int(info.get("kCGWindowLayer", -1)) != 0:
+                continue
+            pid = int(info.get("kCGWindowOwnerPID", -1))
+            app_info = known_apps.get(pid)
+            if app_info is None:
+                continue
+            wid = int(info.get("kCGWindowNumber", -1))
+            if wid <= 0 or wid in seen_ids:
+                continue
+            # The All list reports many layer-0 *backing surfaces* per real
+            # window: title-less toolbar/tab strips (screen-width x ~30px),
+            # tiny drag/icon surfaces (64x64, 1x1), zero-alpha overlays (e.g.
+            # a fullscreen window's menu-bar strip), and empty placeholder
+            # shells. A genuinely switchable window carries a non-empty
+            # title, a real size, and non-zero alpha -- filter on all three.
+            title = str(info.get("kCGWindowName") or "").strip()
+            if not title:
+                continue
+            try:
+                alpha = float(info.get("kCGWindowAlpha", 1.0))
+            except (TypeError, ValueError):
+                alpha = 1.0
+            if alpha <= 0.0:
+                continue
+            bounds = info.get("kCGWindowBounds") or {}
+            if int(bounds.get("Width", 0)) < 60 or int(bounds.get("Height", 0)) < 60:
+                continue
+            if (pid, title) in seen_pid_title:
+                continue
+            name, bundle_id = app_info
+            extra.append(
+                WindowInfo(
+                    app_name=name,
+                    window_title=title,
+                    window_id=wid,
+                    bundle_id=bundle_id,
+                    pid=pid,
+                    is_minimized=False,
+                )
+            )
+            seen_ids.add(wid)
+            seen_pid_title.add((pid, title))
+        return extra
 
     def frontmost_bundle_id(self) -> str | None:
         try:
@@ -162,65 +279,124 @@ class MacWindowProvider(WindowProvider):
             return None
 
     def frontmost_window_center(self) -> tuple[float, float] | None:
-        """Center point, in global screen coordinates, of the frontmost
-        app's topmost on-screen window -- used to pick which monitor is
-        "active" when the launcher/switcher opens on a multi-display setup.
+        """Center point, in global (Quartz/Qt) screen coordinates, of the
+        frontmost app's focused window -- used to pick which monitor the
+        launcher/switcher opens on in a multi-display setup.
+
+        Deliberately does *not* derive this from ``CGWindowListCopyWindowInfo``
+        bounds. That API has a long-standing bug where a window's bounds for
+        a native-fullscreen window on a secondary display are frequently
+        reported relative to the *primary* display's frame instead of the
+        actual display it occupies -- so a numerically "valid" center point
+        can still map to the wrong ``QScreen``.
+
+        Also deliberately does *not* use ``NSScreen.mainScreen()`` (tried
+        first): that's scoped to the *calling process's own* key window, not
+        the system-wide frontmost app -- since this app is a background/
+        accessory app with no key window of its own most of the time, it
+        just reflected stale/irrelevant state instead of the other app's
+        display.
+
+        Instead this reads the frontmost app's ``kAXFocusedWindowAttribute``
+        position/size directly via Accessibility. AX position/size use the
+        same top-left/Y-down global coordinate space as CGWindowList and Qt
+        (no flip needed), but are queried live from the focused app itself
+        rather than reconstructed from the window server's compositing list,
+        so they aren't subject to the CGWindowList fullscreen-bounds bug.
+        Querying only the frontmost (active) app also sidesteps the separate
+        AX limitation where *background* apps' windows can fail to enumerate
+        while some app is in fullscreen (see ``_cg_supplement()``) -- the
+        frontmost app's own AX tree is the one case that's reliably present.
         """
+        import os
+        import sys
+
+        debug = os.environ.get("ALTTABBER_DEBUG_SCREEN") == "1"
+
+        def dbg(msg: str) -> None:
+            if debug:
+                print(f"[alttabber windows] {msg}", file=sys.stderr)
+
         try:
-            from Cocoa import NSWorkspace  # type: ignore
-            from Quartz import (  # type: ignore
-                CGWindowListCopyWindowInfo,
-                kCGWindowListOptionOnScreenOnly,
-                kCGNullWindowID,
+            from ApplicationServices import (  # type: ignore
+                AXUIElementCreateApplication,
+                AXUIElementCopyAttributeValue,
+                AXValueGetValue,
+                kAXFocusedWindowAttribute,
+                kAXPositionAttribute,
+                kAXSizeAttribute,
+                kAXValueCGPointType,
+                kAXValueCGSizeType,
             )
+            from Cocoa import NSWorkspace  # type: ignore
         except ImportError:
+            dbg("frontmost_window_center: Cocoa/ApplicationServices import failed")
             return None
-        front = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if front is None:
+        try:
+            front = NSWorkspace.sharedWorkspace().frontmostApplication()
+            if front is None:
+                dbg("frontmost_window_center: no frontmost application")
+                return None
+            name = str(front.localizedName()) if front.localizedName() else "?"
+            pid = int(front.processIdentifier())
+            app_el = AXUIElementCreateApplication(pid)
+            err, win = AXUIElementCopyAttributeValue(
+                app_el, kAXFocusedWindowAttribute, None
+            )
+            if err != 0 or win is None:
+                dbg(f"frontmost_window_center: {name} (pid {pid}) no focused window (err={err})")
+                return None
+            err, pos_ref = AXUIElementCopyAttributeValue(win, kAXPositionAttribute, None)
+            if err != 0 or pos_ref is None:
+                dbg(f"frontmost_window_center: {name} (pid {pid}) no position (err={err})")
+                return None
+            err, size_ref = AXUIElementCopyAttributeValue(win, kAXSizeAttribute, None)
+            if err != 0 or size_ref is None:
+                dbg(f"frontmost_window_center: {name} (pid {pid}) no size (err={err})")
+                return None
+            # kAXPositionAttribute/kAXSizeAttribute come back as opaque
+            # AXValueRef wrappers, not usable CGPoint/CGSize structs directly
+            # -- AXValueGetValue unpacks the underlying value into ``out``.
+            ok, point = AXValueGetValue(pos_ref, kAXValueCGPointType, None)
+            if not ok or point is None:
+                dbg(f"frontmost_window_center: {name} (pid {pid}) AXValueGetValue(point) failed")
+                return None
+            ok, size = AXValueGetValue(size_ref, kAXValueCGSizeType, None)
+            if not ok or size is None:
+                dbg(f"frontmost_window_center: {name} (pid {pid}) AXValueGetValue(size) failed")
+                return None
+            cx = float(point.x) + float(size.width) / 2
+            cy = float(point.y) + float(size.height) / 2
+            dbg(
+                f"frontmost_window_center: {name} (pid {pid}) "
+                f"pos=({point.x},{point.y}) size=({size.width},{size.height}) -> center=({cx},{cy})"
+            )
+            return (cx, cy)
+        except Exception as e:
+            dbg(f"frontmost_window_center: exception {e!r}")
             return None
-        pid = int(front.processIdentifier())
-        # Onscreen windows come back already ordered front-to-back, so the
-        # first layer-0 (normal) window owned by this pid is the frontmost
-        # one -- no need to resolve a specific CGWindowID.
-        #
-        # macOS native fullscreen moves the window to a separate Space; in
-        # some cases the window's layer changes or the layer-0 window isn't
-        # returned. As a fallback, accept any layer (not just 0) so the
-        # frontmost app's window is found even in fullscreen.
-        info_list = CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly, kCGNullWindowID
-        )
-        if not info_list:
-            return None
-        fallback: tuple[float, float] | None = None
-        for info in info_list:
-            if int(info.get("kCGWindowOwnerPID", -1)) != pid:
-                continue
-            bounds = info.get("kCGWindowBounds")
-            if not bounds:
-                continue
-            x = float(bounds.get("X", 0))
-            y = float(bounds.get("Y", 0))
-            w = float(bounds.get("Width", 0))
-            h = float(bounds.get("Height", 0))
-            center = (x + w / 2, y + h / 2)
-            if int(info.get("kCGWindowLayer", -1)) == 0:
-                return center
-            if fallback is None:
-                fallback = center
-        return fallback
 
     def list_app_windows(self, bundle_id: str) -> list[WindowInfo]:
-        """Enumerate windows of one app via AXUIElement (kAXChildrenAttribute).
+        """Enumerate windows of one app via AXUIElement (kAXChildrenAttribute),
+        supplemented by CGWindowList for anything AX missed.
 
         AX gives us window references that respond to kAXRaiseAction, which
-        CGWindowList alone cannot target. Falls back to filtering
-        ``list_windows`` when AX is unavailable.
+        CGWindowList alone cannot target. But AX drops a background app's
+        windows -- and any app's windows on other Spaces -- while something is
+        in native fullscreen, so the per-app (Alt+`) switcher would otherwise
+        show an incomplete list. ``_cg_supplement`` fills those in (without AX
+        refs; they fall back to the pid/title raise path). Falls back to
+        filtering ``list_windows`` when both are unavailable.
         """
         pid = self._pid_for_bundle(bundle_id)
         if pid is None:
             return [w for w in self.list_windows() if w.bundle_id == bundle_id]
-        wins = self._ax_windows(pid)
+        NSRunningApplication, _ = _import_cocoa()
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        name = str(app.localizedName()) if app and app.localizedName() else (bundle_id or "App")
+        wins = self._ax_windows(pid, app_name=name, bundle_id=bundle_id)
+        wins = wins + self._cg_supplement(wins, {pid: (name, bundle_id)})
+        wins = self._apply_exclusions(wins)
         if not wins:
             return [w for w in self.list_windows() if w.bundle_id == bundle_id]
         return wins
