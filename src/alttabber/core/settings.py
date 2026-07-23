@@ -105,13 +105,36 @@ _MODIFIER_KEYS = {
     Qt.Key_CapsLock,
 }
 
+# Portable chord modifier -> macOS display name. parse_chord() accepts both
+# forms, so the display value round-trips through save/load unchanged.
+_MAC_MOD_DISPLAY = {
+    "Alt": "Option",
+    "Super": "Command",
+    "Cmd": "Command",
+    "Ctrl": "Control",
+}
+
+
+def _format_chord(chord: str) -> str:
+    """Convert a portable chord string to platform-native display names.
+
+    On macOS: Alt→Option, Super/Cmd→Command, Ctrl→Control. Other platforms
+    show the portable names as-is. The result still parses via
+    ``parse_chord()`` since it accepts both forms.
+    """
+    if sys.platform != "darwin":
+        return chord
+    parts = chord.split("+")
+    return "+".join(_MAC_MOD_DISPLAY.get(p.strip(), p.strip()) for p in parts)
+
 
 class ChordCaptureEdit(QLineEdit):
     """A read-only field that records a chord from an actual key press.
 
     Click "Record" (or call :meth:`start_recording`) to arm it; the next
     key press with at least one modifier is captured and formatted as a
-    Alt-Tabber chord string (e.g. ``Alt+Tab``). Escape or losing focus while
+    chord string using platform-native modifier names (e.g. ``Option+Tab``
+    on macOS, ``Alt+Tab`` elsewhere). Escape or losing focus while
     recording cancels and restores the previous value.
     """
 
@@ -120,9 +143,9 @@ class ChordCaptureEdit(QLineEdit):
     def __init__(self, initial: str, parent=None) -> None:
         super().__init__(parent)
         self._recording = False
-        self._pre_record_text = initial
+        self._pre_record_text = _format_chord(initial)
         self.setReadOnly(True)
-        self.setText(initial)
+        self.setText(_format_chord(initial))
 
     def start_recording(self) -> None:
         self._pre_record_text = self.text()
@@ -184,9 +207,10 @@ class ChordCaptureEdit(QLineEdit):
 
         parts.append(key_str)
         chord = "+".join(parts)
+        display = _format_chord(chord)
         self._recording = False
-        self.setText(chord)
-        self.chord_captured.emit(chord)
+        self.setText(display)
+        self.chord_captured.emit(display)
 
 
 def _chord_row(initial: str) -> tuple[QWidget, ChordCaptureEdit]:

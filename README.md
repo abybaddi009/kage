@@ -18,17 +18,17 @@ minimized windows, can't preview what you're switching to, can't let you pick a
 out. **Alt-Tabber fixes all of it** — and hands you a fuzzy-search launcher in the same
 app, with every shortcut rebindable.
 
-* **Alt+Tab app switcher** — hold Alt, Tab to cycle, release to commit. Same
-  gesture you already know, but with **MRU ordering that persists across
+* **Option+Tab app switcher** — hold Option, Tab to cycle, release to commit.
+  Same gesture you already know, but with **MRU ordering that persists across
   restarts**, live window previews, and Shift+Tab to cycle backward.
-* **Alt+` per-app window switcher** — cycle just the windows of the app you're
-  in and raise the exact one you want. Minimized windows are *not* silently
-  hidden the way they are in the stock switcher.
-* **Super+A launcher** — a keystroke opens a fuzzy palette of every open window
-  *and* every installed app. Type a few letters, hit Enter, and the window is
-  raised or the app launched. Open windows rank above apps you haven't started
-  yet, and the palette shares the switcher's MRU recency — what you raised last
-  ranks first in both.
+* **Option+` per-app window switcher** — cycle just the windows of the app
+  you're in and raise the exact one you want. Minimized windows are *not*
+  silently hidden the way they are in the stock switcher.
+* **Command+A launcher** — a keystroke opens a fuzzy palette of every open
+  window *and* every installed app. Type a few letters, hit Enter, and the
+  window is raised or the app launched. Open windows rank above apps you
+  haven't started yet, and the palette shares the switcher's MRU recency —
+  what you raised last ranks first in both.
 * **Live previews** — watch a thumbnail of the window you're about to land on,
   or switch to the Window Previews theme where every window is its own
   screenshot tile.
