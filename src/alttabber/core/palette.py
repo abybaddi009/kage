@@ -30,6 +30,7 @@ clicking a thumbnail activates that window directly.
 from __future__ import annotations
 
 import math
+import sys
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFontMetrics, QIcon, QPixmap
@@ -533,6 +534,10 @@ class PaletteWindow(QWidget):
         self._overview.set_hover_armed(False)
         self.show()
         self.raise_()
+        if sys.platform == "darwin":
+            from ..platform.macos.overlay import raise_above_fullscreen
+
+            raise_above_fullscreen(self)
         self.activateWindow()
         self._field.setFocus()
 

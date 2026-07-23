@@ -8,6 +8,8 @@ window enumeration for per-app windows.
 
 from __future__ import annotations
 
+import sys
+
 from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QRect, Qt, Signal
@@ -585,6 +587,10 @@ class SwitcherOverlay(QWidget):
             self.adjustSize()
         self.show()
         self.raise_()
+        if sys.platform == "darwin":
+            from ..platform.macos.overlay import raise_above_fullscreen
+
+            raise_above_fullscreen(self)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
