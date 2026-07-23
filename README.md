@@ -57,3 +57,17 @@ files to hand-edit. Pick between the **Default** theme (icons plus a live
 preview of your selection) and **Window Previews** (every window shown as its
 own thumbnail), choose whether Alt+Tab lists apps or every individual window,
 and re-record any hotkey by simply pressing the new combo.
+
+## Tests
+
+The suite uses pytest (install the test extras once):
+
+```sh
+uv pip install -e ".[test]"
+```
+
+Run the tests (the offscreen Qt platform lets them run headless):
+
+```sh
+QT_QPA_PLATFORM=offscreen uv run pytest
+```
