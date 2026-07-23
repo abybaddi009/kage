@@ -56,8 +56,8 @@ OVERLAY_MUTED = "#9ca3af"
 
 # ---------------------------------------------------------------------------
 # UI size tiers: multipliers applied to base tile/icon/text sizes in the
-# launcher palette (src/kage/core/palette.py) and the switcher overlay
-# (src/kage/core/switcher.py). "small" is the historical default sizing.
+# launcher palette (src/alttabber/core/palette.py) and the switcher overlay
+# (src/alttabber/core/switcher.py). "small" is the historical default sizing.
 # Keep in sync with UI_SIZES in config.py.
 UI_SIZE_SCALES = {
     "small": 1.0,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Kage.app and package it into a .dmg using uv + PyInstaller.
+# Build Alt-Tabber.app and package it into a .dmg using uv + PyInstaller.
 #
 # Usage:
 #   ./build_dmg.sh            # build + package, clean dist/
@@ -7,9 +7,9 @@
 #
 set -euo pipefail
 
-APP_NAME="Kage"
-BUNDLE_ID="dev.baddi.abhishek.Kage"
-SPEC="Kage.spec"
+APP_NAME="Alt-Tabber"
+BUNDLE_ID="dev.baddi.abhishek.AltTabber"
+SPEC="AltTabber.spec"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cd "$ROOT_DIR"
@@ -46,13 +46,13 @@ rm -f "$DMG_PATH"
 echo "==> Creating ${DMG_NAME}"
 # Create a read-write DMG, copy the app, then convert to a compressed
 # read-only image for distribution.
-STAGING_DIR="$(mktemp -d -t kage_dmg)"
+STAGING_DIR="$(mktemp -d -t alttabber_dmg)"
 trap 'rm -rf "$STAGING_DIR"' EXIT
 
 cp -R "$APP_PATH" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
 
-RW_DMG="$(mktemp -u -t kage_rw).dmg"
+RW_DMG="$(mktemp -u -t alttabber_rw).dmg"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING_DIR" \
   -fs HFS+ -size 200m "$RW_DMG" -quiet
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 \

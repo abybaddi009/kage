@@ -1,4 +1,4 @@
-"""System tray icon for Kage.
+"""System tray icon for Alt-Tabber.
 
 Menu: About, Settings, Reload config, Quit.
 """
@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 
 def _make_icon() -> QIcon:
-    """The Kage tray icon, loaded from the bundled logo when available.
+    """The Alt-Tabber tray icon, loaded from the bundled logo when available.
 
     Falls back to a drawn placeholder when the logo asset is missing
     (e.g. running from a checkout without the assets installed).
@@ -51,14 +51,14 @@ class TrayController(QObject):
     def __init__(self, app: QApplication) -> None:
         super().__init__()
         self._tray = QSystemTrayIcon(_make_icon(), parent=app)
-        self._tray.setToolTip("Kage")
+        self._tray.setToolTip("Alt-Tabber")
         self._build_menu()
         self._tray.show()
 
     def _build_menu(self) -> None:
         menu = QMenu()
 
-        act_about = QAction("About Kage", menu)
+        act_about = QAction("About Alt-Tabber", menu)
         act_about.triggered.connect(self.about_clicked.emit)
         menu.addAction(act_about)
 
@@ -74,7 +74,7 @@ class TrayController(QObject):
 
         menu.addSeparator()
 
-        act_quit = QAction("Quit Kage", menu)
+        act_quit = QAction("Quit Alt-Tabber", menu)
         act_quit.triggered.connect(self.quit_clicked.emit)
         menu.addAction(act_quit)
 

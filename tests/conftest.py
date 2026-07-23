@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the kage test suite.
+"""Shared pytest fixtures for the alttabber test suite.
 
 PySide6 widgets require a running ``QApplication``. We create a single
 session-scoped instance so tests don't each pay the startup cost and don't

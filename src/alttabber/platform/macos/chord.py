@@ -1,4 +1,4 @@
-"""Parse Kage chord strings ('Super+A', 'Alt+`', 'Alt+Tab') into a
+"""Parse Alt-Tabber chord strings ('Super+A', 'Alt+`', 'Alt+Tab') into a
 (modifier-flags, keycode) pair for the macOS event tap.
 
 Modifier tokens recognised: Super/Cmd -> Command; Alt/Option -> Alternate;

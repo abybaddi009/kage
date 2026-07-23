@@ -1,13 +1,13 @@
 """Plugin interface for launcher result sources.
 
-Third-party packages can register entry points in the ``kage.sources`` group::
+Third-party packages can register entry points in the ``alttabber.sources`` group::
 
-    [project.entry-points."kage.sources"]
-    my-source = "my_pkg.kage_source:MySource"
+    [project.entry-points."alttabber.sources"]
+    my-source = "my_pkg.alttabber_source:MySource"
 
 Each entry point resolves to a callable returning an object implementing the
 :class:`ResultSource` protocol (a ``search(query)`` method returning a list
-of :class:`~kage.core.matcher.Result`). Kage loads all sources at palette
+of :class:`~alttabber.core.matcher.Result`). Alt-Tabber loads all sources at palette
 build time and merges their results into the launcher.
 """
 
@@ -29,17 +29,17 @@ class ResultSource(Protocol):
 
 
 def load_sources() -> list[ResultSource]:
-    """Discover and instantiate all registered ``kage.sources`` plugins.
+    """Discover and instantiate all registered ``alttabber.sources`` plugins.
 
     A broken plugin is skipped (logged to stderr) so one bad plugin can't
     take down the launcher.
     """
     sources: list[ResultSource] = []
     try:
-        eps = entry_points(group="kage.sources")
+        eps = entry_points(group="alttabber.sources")
     except TypeError:  # py<3.10 select interface
         try:
-            eps = entry_points().get("kage.sources", [])
+            eps = entry_points().get("alttabber.sources", [])
         except Exception:
             eps = []
     except Exception:
@@ -53,5 +53,5 @@ def load_sources() -> list[ResultSource]:
         except Exception as exc:  # pragma: no cover - plugin errors
             import sys
 
-            print(f"kage: skipping source {ep.name!r}: {exc}", file=sys.stderr)
+            print(f"alttabber: skipping source {ep.name!r}: {exc}", file=sys.stderr)
     return sources

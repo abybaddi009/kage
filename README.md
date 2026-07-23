@@ -1,21 +1,21 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Kage logo" width="240">
+  <img src="assets/logo.png" alt="Alt-Tabber logo" width="240">
 </p>
 
-<h1 align="center">Kage</h1>
+<h1 align="center">Alt-Tabber</h1>
 
 <p align="center">The window switcher macOS should have shipped with.</p>
 
 ---
 
 <p align="center">
-  <img src="assets/switcher-hero.png" alt="Kage switcher in action">
+  <img src="assets/switcher-hero.png" alt="Alt-Tabber switcher in action">
 </p>
 
 macOS's built-in `Cmd+Tab` is a 20-year-old row of blurry icons. It can't show
 minimized windows, can't preview what you're switching to, can't let you pick a
 *specific* window of an app, and forgets what you used last the moment you log
-out. **Kage fixes all of it** — and hands you a fuzzy-search launcher in the same
+out. **Alt-Tabber fixes all of it** — and hands you a fuzzy-search launcher in the same
 app, with every shortcut rebindable.
 
 * **Alt+Tab app switcher** — hold Alt, Tab to cycle, release to commit. Same
@@ -43,11 +43,11 @@ Cross-platform by design: macOS today, Linux (Wayland-first) and Windows next.
 ## Get started
 
 ```sh
-uv run kage
+uv run alttabber
 ```
 
 On first launch, grant **Accessibility** and **Screen Recording** permission
-when macOS asks, then restart Kage. Accessibility lets Kage raise and switch
+when macOS asks, then restart Alt-Tabber. Accessibility lets Alt-Tabber raise and switch
 windows; Screen Recording lets it read window titles and show live previews.
 
 ## Make it yours

@@ -43,7 +43,7 @@ class MacAppProvider(AppProvider):
         # Directory scan + plist reads take ~80ms; cache it for the process
         # lifetime instead of re-scanning on every icon lookup (the app
         # switcher/launcher can ask for this dozens of times per keystroke
-        # or per Alt+Tab). Installed apps rarely change while Kage runs.
+        # or per Alt+Tab). Installed apps rarely change while Alt-Tabber runs.
         self._apps_cache: list[AppInfo] | None = None
         self._icon_by_bundle: dict[str, str | None] = {}
 

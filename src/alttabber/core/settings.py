@@ -111,7 +111,7 @@ class ChordCaptureEdit(QLineEdit):
 
     Click "Record" (or call :meth:`start_recording`) to arm it; the next
     key press with at least one modifier is captured and formatted as a
-    Kage chord string (e.g. ``Alt+Tab``). Escape or losing focus while
+    Alt-Tabber chord string (e.g. ``Alt+Tab``). Escape or losing focus while
     recording cancels and restores the previous value.
     """
 
@@ -522,7 +522,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, config: Config, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Kage Settings")
+        self.setWindowTitle("Alt-Tabber Settings")
         self.setModal(True)
         self._config = config
         self._launch_at_login_init = self._is_launch_at_login()
@@ -533,7 +533,7 @@ class SettingsDialog(QDialog):
 
         self._launch_at_login = QCheckBox()
         self._launch_at_login.setChecked(self._launch_at_login_init)
-        general.add_row("Launch Kage at login", self._launch_at_login)
+        general.add_row("Launch Alt-Tabber at login", self._launch_at_login)
 
         self._screen_preference = QComboBox()
         for value, label in _SCREEN_PREFERENCES:
@@ -623,7 +623,7 @@ class SettingsDialog(QDialog):
         logo_lbl.setAlignment(Qt.AlignCenter)
         about.add_widget(logo_lbl, center=True)
 
-        name_lbl = QLabel("Kage")
+        name_lbl = QLabel("Alt-Tabber")
         f = name_lbl.font()
         f.setPointSize(18)
         f.setBold(True)
@@ -636,7 +636,7 @@ class SettingsDialog(QDialog):
         version_lbl.setAlignment(Qt.AlignCenter)
         about.add_widget(version_lbl)
 
-        bundle_lbl = QLabel("dev.baddi.abhishek.Kage")
+        bundle_lbl = QLabel("dev.baddi.abhishek.AltTabber")
         bundle_lbl.setObjectName("muted")
         bundle_lbl.setAlignment(Qt.AlignCenter)
         about.add_widget(bundle_lbl)
@@ -763,7 +763,7 @@ class SettingsDialog(QDialog):
         try:
             save_config(cfg)
         except Exception as exc:  # pragma: no cover - filesystem error
-            QMessageBox.warning(self, "Kage", f"Could not save config:\n{exc}")
+            QMessageBox.warning(self, "Alt-Tabber", f"Could not save config:\n{exc}")
             return
 
         if self._launch_at_login.isChecked() != self._launch_at_login_init:

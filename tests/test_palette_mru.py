@@ -9,10 +9,10 @@ differently from Alt+Tab. After wiring the shared ``MRUTracker`` and
 from __future__ import annotations
 from types import SimpleNamespace
 
-from kage.backends.base import AppInfo, AppProvider, WindowInfo, WindowProvider
+from alttabber.backends.base import AppInfo, AppProvider, WindowInfo, WindowProvider
 
-from kage.core.mru import MRUTracker, WindowMRUTracker
-from kage.core.palette import PaletteWindow
+from alttabber.core.mru import MRUTracker, WindowMRUTracker
+from alttabber.core.palette import PaletteWindow
 
 
 class _FakeWindowProvider(WindowProvider):

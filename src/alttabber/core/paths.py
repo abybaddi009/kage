@@ -1,4 +1,4 @@
-"""Path helpers for Kage user data and config locations."""
+"""Path helpers for Alt-Tabber user data and config locations."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ import os
 from pathlib import Path
 from importlib import resources
 
-APP_NAME = "kage"
+APP_NAME = "alttabber"
 
 
 def config_dir() -> Path:
-    """Directory holding user config (e.g. ~/.config/kage)."""
+    """Directory holding user config (e.g. ~/.config/alttabber)."""
     env = os.environ.get("XDG_CONFIG_HOME")
     base = Path(env) if env else Path.home() / ".config"
     return base / APP_NAME
@@ -53,7 +53,7 @@ def theme_preview_path(
     if file_name is None:
         return None
     try:
-        with resources.files("kage.assets").joinpath(file_name) as p:
+        with resources.files("alttabber.assets").joinpath(file_name) as p:
             resolved = Path(str(p))
             if resolved.is_file():
                 return resolved
@@ -68,7 +68,7 @@ def theme_preview_path(
 
 
 def logo_path() -> Path | None:
-    """Path to the bundled Kage logo, or None if unavailable.
+    """Path to the bundled Alt-Tabber logo, or None if unavailable.
 
     Resolves through ``importlib.resources`` so it works both in a
     source checkout and inside a PyInstaller-frozen app (where the file
@@ -77,7 +77,7 @@ def logo_path() -> Path | None:
     has not installed the package data.
     """
     try:
-        with resources.files("kage.assets").joinpath("logo.png") as p:
+        with resources.files("alttabber.assets").joinpath("logo.png") as p:
             resolved = Path(str(p))
             if resolved.is_file():
                 return resolved

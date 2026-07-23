@@ -3,7 +3,7 @@
 Renders the real SwitcherOverlay in each theme x expansion state (with a
 transparent background so the rounded corners survive), then composites it
 centered over ``assets/generic-wallpaper.png``. Writes each preview to both
-``assets/`` and ``src/kage/assets/`` (the packaged copy is what
+``assets/`` and ``src/alttabber/assets/`` (the packaged copy is what
 ``theme_preview_path`` resolves first).
 
 Usage::
@@ -29,10 +29,10 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 app = QApplication(sys.argv)
 
-from kage.core.switcher import SwitcherOverlay, _AppEntry, _WindowEntry
+from alttabber.core.switcher import SwitcherOverlay, _AppEntry, _WindowEntry
 
 ASSETS = REPO / "assets"
-PKG_ASSETS = REPO / "src" / "kage" / "assets"
+PKG_ASSETS = REPO / "src" / "alttabber" / "assets"
 WALL = str(ASSETS / "generic-wallpaper.jpg")
 LOGO = str(ASSETS / "logo.png")
 
@@ -61,7 +61,7 @@ apps = [
     _AppEntry(key="m", name="Music", icon_path=MUSIC, bundle_id="m", window_id=4, window_count=1),
 ]
 wins = [
-    _WindowEntry(window_id=1, title="Safari — kage/pull/42", app_name="Safari", icon_path=SAFARI, bundle_id="s"),
+    _WindowEntry(window_id=1, title="Safari — alttabber/pull/42", app_name="Safari", icon_path=SAFARI, bundle_id="s"),
     _WindowEntry(window_id=2, title="Safari — Documentation", app_name="Safari", icon_path=SAFARI, bundle_id="s"),
     _WindowEntry(window_id=3, title="Downloads", app_name="Finder", icon_path=FINDER, bundle_id="f"),
     _WindowEntry(window_id=4, title="Meeting notes — July", app_name="Notes", icon_path=NOTES, bundle_id="n"),

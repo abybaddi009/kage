@@ -48,7 +48,7 @@ def prompt() -> bool:
     """Trigger the system Accessibility prompt (non-blocking).
 
     Returns True if already trusted, False otherwise (the system will show
-    the prompt UI and the user must toggle the switch and restart kage).
+    the prompt UI and the user must toggle the switch and restart alttabber).
     """
     apis = _import_api_options()
     if apis is None:
@@ -92,7 +92,7 @@ def prompt_screen_recording() -> bool:
     """Trigger the system Screen Recording prompt (non-blocking).
 
     Returns True if already trusted. Otherwise the system shows its own
-    prompt; the user must toggle the switch and restart Kage (macOS does not
+    prompt; the user must toggle the switch and restart Alt-Tabber (macOS does not
     let an app self-refresh this grant without a relaunch).
     """
     try:

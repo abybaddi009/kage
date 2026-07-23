@@ -1,4 +1,4 @@
-"""Kage entry point."""
+"""Alt-Tabber entry point."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from PySide6.QtWidgets import QApplication
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("Kage")
+    app.setApplicationName("Alt-Tabber")
     app.setQuitOnLastWindowClosed(False)  # stay resident via tray
 
-    from .core.app import KageApp
+    from .core.app import AltTabberApp
 
-    return KageApp(app).start()
+    return AltTabberApp(app).start()
 
 
 if __name__ == "__main__":

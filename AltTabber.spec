@@ -2,13 +2,13 @@
 
 
 a = Analysis(
-    ['src/kage/__main__.py'],
+    ['src/alttabber/__main__.py'],
     pathex=[],
     binaries=[],
     datas=[
-        ('src/kage/assets/logo.png', 'kage/assets'),
-        ('src/kage/assets/default.png', 'kage/assets'),
-        ('src/kage/assets/thumbnails.png', 'kage/assets'),
+        ('src/alttabber/assets/logo.png', 'alttabber/assets'),
+        ('src/alttabber/assets/default.png', 'alttabber/assets'),
+        ('src/alttabber/assets/thumbnails.png', 'alttabber/assets'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -25,7 +25,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Kage',
+    name='AltTabber',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -45,11 +45,11 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Kage',
+    name='AltTabber',
 )
 app = BUNDLE(
     coll,
-    name='Kage.app',
+    name='AltTabber.app',
     icon='assets/logo.icns',
-    bundle_identifier='dev.baddi.abhishek.Kage',
+    bundle_identifier='dev.baddi.abhishek.AltTabber',
 )

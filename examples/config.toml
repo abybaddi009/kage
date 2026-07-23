@@ -1,4 +1,4 @@
-# Example Kage config. Copy to ~/.config/kage/config.toml to override defaults.
+# Example Alt-Tabber config. Copy to ~/.config/alttabber/config.toml to override defaults.
 
 [hotkeys]
 launcher = "Super+A"

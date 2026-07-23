@@ -18,8 +18,8 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
-from kage.core.palette import _OverviewGrid
-from kage.core.switcher import _WindowEntry
+from alttabber.core.palette import _OverviewGrid
+from alttabber.core.switcher import _WindowEntry
 
 
 def _entry(window_id: int, title: str = "win") -> _WindowEntry:
@@ -113,8 +113,8 @@ def test_eventfilter_arms_on_real_mouse_move_over_palette(qapp):
     that lands inside the palette window; moves outside don't."""
     from types import SimpleNamespace
 
-    from kage.backends.base import AppInfo, AppProvider, WindowInfo, WindowProvider
-    from kage.core.palette import PaletteWindow
+    from alttabber.backends.base import AppInfo, AppProvider, WindowInfo, WindowProvider
+    from alttabber.core.palette import PaletteWindow
 
     class _WP(WindowProvider):
         def list_windows(self):

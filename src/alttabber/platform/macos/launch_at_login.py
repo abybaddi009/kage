@@ -3,7 +3,7 @@
 Uses SMAppService (macOS 13+) when available, falling back to the legacy
 SMLoginItemSetEnabled API. Both require the app to be a proper bundle; when
 running via ``uv run`` the call may report success but have no effect until
-Kage is packaged as an .app.
+Alt-Tabber is packaged as an .app.
 
 The functions degrade gracefully (return False) when the ServiceManagement
 framework is unavailable.
@@ -31,7 +31,7 @@ def _import_legacy():
 
 
 def set_launch_at_login(enabled: bool) -> bool:
-    """Enable or disable launching Kage at login. Returns success."""
+    """Enable or disable launching Alt-Tabber at login. Returns success."""
     SMAppService = _import_smappservice()
     if SMAppService is not None:
         try:
@@ -48,7 +48,7 @@ def set_launch_at_login(enabled: bool) -> bool:
         try:
             # Legacy API: identifier + enabled flag. Best-effort; only works
             # for a packaged helper bundle.
-            return bool(legacy("ai.kage.Kage", enabled))
+            return bool(legacy("ai.alttabber.AltTabber", enabled))
         except Exception:
             return False
     return False

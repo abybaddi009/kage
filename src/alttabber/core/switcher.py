@@ -669,7 +669,7 @@ class SwitcherController(QObject):
     def _flat_window_entries(self) -> list[_WindowEntry]:
         """Every window of every app as its own entry, ordered by per-window
         MRU so a single Alt+Tab targets the previously focused window
-        regardless of which app owns it (KDE-style). Windows kage has never
+        regardless of which app owns it (KDE-style). Windows alttabber has never
         seen activated are appended after known ones in list_windows order."""
         windows = self._wp.list_windows()
         # Deduplicate by window_id (AX may report a window twice across

@@ -62,7 +62,7 @@ class SwitcherConfig:
 SCREEN_PREFERENCES = ("active", "pointer")
 
 # UI size tiers: scale tile/icon/text size in the launcher palette and
-# switcher overlay. See src/kage/core/theme.py:UI_SIZE_SCALES.
+# switcher overlay. See src/alttabber/core/theme.py:UI_SIZE_SCALES.
 UI_SIZES = ("small", "medium", "large")
 
 
@@ -71,7 +71,7 @@ class Config:
     hotkeys: HotkeyBindings = field(default_factory=HotkeyBindings)
     palette: PaletteConfig = field(default_factory=PaletteConfig)
     switcher: SwitcherConfig = field(default_factory=SwitcherConfig)
-    # If True, kage quits when the tray is removed rather than staying resident.
+    # If True, alttabber quits when the tray is removed rather than staying resident.
     quit_on_tray_close: bool = False
     # Which screen the launcher palette and switcher overlay open on: "active"
     # (the screen the window last occupied, falling back to the primary
@@ -138,7 +138,7 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     path = path or config_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Kage configuration. Edit and use Reload config from the tray.",
+        "# Alt-Tabber configuration. Edit and use Reload config from the tray.",
         "",
         f"quit_on_tray_close = {'true' if cfg.quit_on_tray_close else 'false'}",
         f'screen_preference = {_toml_str(cfg.screen_preference)}',

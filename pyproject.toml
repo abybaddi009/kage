@@ -1,5 +1,5 @@
 [project]
-name = "kage"
+name = "alttabber"
 version = "0.1.0"
 description = "Extensible application launcher and window switcher (macOS first)."
 readme = "README.md"
@@ -21,7 +21,7 @@ dependencies = [
 test = ["pytest>=8"]
 
 [project.scripts]
-kage = "kage.__main__:main"
+alt-tabber = "alttabber.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.10.2,<0.11.0"]

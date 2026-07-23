@@ -1,4 +1,4 @@
-# Kage — Application Launcher & Window Switcher
+# Alt-Tabber — Application Launcher & Window Switcher
 
 Extensible, cross-platform launcher / window switcher / activator. macOS first, then Linux (Wayland-first), then Windows.
 
@@ -19,7 +19,7 @@ Extensible, cross-platform launcher / window switcher / activator. macOS first, 
 | macOS window list / activation | `pyobjc` (Quartz CGWindowList, ApplicationServices AXUIElement, Cocoa NSWorkspace) |
 | macOS hotkeys + modifier-release detection | CGEventTap via `pyobjc` (requires Accessibility permission); escalate to a small Swift helper only if tap latency proves inadequate |
 | Fuzzy matching | `rapidfuzz` |
-| Config | TOML (`~/.config/kage/config.toml`) |
+| Config | TOML (`~/.config/alttabber/config.toml`) |
 
 ## Architecture
 
@@ -30,7 +30,7 @@ Three backend interfaces, implemented per platform. All platform code lives behi
 - **HotkeyProvider** — register bindings; report modifier press/release events (needed for hold-to-cycle).
 
 ```
-kage/
+alttabber/
   core/        # Qt app, palette UI, switcher overlay, fuzzy matcher, config, tray
   backends/    # the three abstract interfaces
   platform/

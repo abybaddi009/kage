@@ -1,4 +1,4 @@
-"""Kage application: resident Qt app wiring config, tray, and platform checks."""
+"""Alt-Tabber application: resident Qt app wiring config, tray, and platform checks."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class PermissionDialog(QDialog):
         self._open_settings_cb()
 
 
-class KageApp(QObject):
+class AltTabberApp(QObject):
     config_changed = Signal()
 
     def __init__(self, qt_app: QApplication) -> None:
@@ -80,22 +80,22 @@ class KageApp(QObject):
             if not accessibility.is_trusted():
                 accessibility.prompt()
                 PermissionDialog(
-                    "Kage needs Accessibility",
-                    "Kage requires Accessibility permission to read the window list,\n"
+                    "Alt-Tabber needs Accessibility",
+                    "Alt-Tabber requires Accessibility permission to read the window list,\n"
                     "activate windows, and listen for hotkeys.\n\n"
                     "Open System Settings → Privacy & Security → Accessibility,\n"
-                    "enable Kage (or your terminal), then restart Kage.",
+                    "enable Alt-Tabber (or your terminal), then restart Alt-Tabber.",
                     accessibility.open_system_settings,
                 ).exec()
 
             if not accessibility.screen_recording_trusted():
                 accessibility.prompt_screen_recording()
                 PermissionDialog(
-                    "Kage needs Screen Recording",
-                    "Kage requires Screen Recording permission to read window\n"
+                    "Alt-Tabber needs Screen Recording",
+                    "Alt-Tabber requires Screen Recording permission to read window\n"
                     "titles (macOS hides them from other apps otherwise).\n\n"
                     "Open System Settings → Privacy & Security → Screen Recording,\n"
-                    "enable Kage (or your terminal), then restart Kage.",
+                    "enable Alt-Tabber (or your terminal), then restart Alt-Tabber.",
                     accessibility.open_screen_recording_settings,
                 ).exec()
 
@@ -110,7 +110,7 @@ class KageApp(QObject):
 
         if not QSystemTrayIcon_isAvailable():
             print(
-                "Warning: no system tray available; Kage will run headless.",
+                "Warning: no system tray available; Alt-Tabber will run headless.",
                 file=sys.stderr,
             )
 
@@ -271,7 +271,7 @@ class KageApp(QObject):
             self._window_switcher.config = self.config
         self.config_changed.emit()
         if self._tray is not None:
-            self._tray.show_message("Kage", "Configuration reloaded.")
+            self._tray.show_message("Alt-Tabber", "Configuration reloaded.")
 
 
 def QSystemTrayIcon_isAvailable() -> bool:
