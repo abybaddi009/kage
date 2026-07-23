@@ -35,6 +35,13 @@ def target_screen(
             screen = QGuiApplication.screenAt(QPoint(int(center[0]), int(center[1])))
             if screen is not None:
                 return screen
+    # Frontmost window not found (e.g. app in macOS native fullscreen on a
+    # separate Space): fall back to the pointer position — the most reliable
+    # indicator of where the user is working — before the stale ``current``
+    # screen or the primary screen.
+    screen = QGuiApplication.screenAt(QCursor.pos())
+    if screen is not None:
+        return screen
     if current is not None:
         return current
     return QGuiApplication.primaryScreen()

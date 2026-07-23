@@ -547,6 +547,11 @@ class SettingsDialog(QDialog):
     def __init__(self, config: Config, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Alt-Tabber Settings")
+        # A modal QDialog with a parent window is constrained to the parent's
+        # screen on macOS, preventing it from being dragged to another
+        # monitor. Override to a regular window (still modal via the call
+        # below) so it can move freely across displays.
+        self.setWindowFlags(Qt.Window)
         self.setModal(True)
         self._config = config
         self._launch_at_login_init = self._is_launch_at_login()

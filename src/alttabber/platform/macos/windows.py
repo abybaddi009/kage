@@ -182,15 +182,19 @@ class MacWindowProvider(WindowProvider):
         # Onscreen windows come back already ordered front-to-back, so the
         # first layer-0 (normal) window owned by this pid is the frontmost
         # one -- no need to resolve a specific CGWindowID.
+        #
+        # macOS native fullscreen moves the window to a separate Space; in
+        # some cases the window's layer changes or the layer-0 window isn't
+        # returned. As a fallback, accept any layer (not just 0) so the
+        # frontmost app's window is found even in fullscreen.
         info_list = CGWindowListCopyWindowInfo(
             kCGWindowListOptionOnScreenOnly, kCGNullWindowID
         )
         if not info_list:
             return None
+        fallback: tuple[float, float] | None = None
         for info in info_list:
             if int(info.get("kCGWindowOwnerPID", -1)) != pid:
-                continue
-            if int(info.get("kCGWindowLayer", -1)) != 0:
                 continue
             bounds = info.get("kCGWindowBounds")
             if not bounds:
@@ -199,8 +203,12 @@ class MacWindowProvider(WindowProvider):
             y = float(bounds.get("Y", 0))
             w = float(bounds.get("Width", 0))
             h = float(bounds.get("Height", 0))
-            return (x + w / 2, y + h / 2)
-        return None
+            center = (x + w / 2, y + h / 2)
+            if int(info.get("kCGWindowLayer", -1)) == 0:
+                return center
+            if fallback is None:
+                fallback = center
+        return fallback
 
     def list_app_windows(self, bundle_id: str) -> list[WindowInfo]:
         """Enumerate windows of one app via AXUIElement (kAXChildrenAttribute).
