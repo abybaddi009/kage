@@ -84,6 +84,14 @@ class WindowProvider(ABC):
         """
         return None
 
+    def close_window(self, window_id: int) -> bool:
+        """Close a specific window. Return success.
+
+        Default implementation has no way to close a window; backends with a
+        window-control API (e.g. AXUIElement on macOS) should override.
+        """
+        return False
+
 
 class AppProvider(ABC):
     @abstractmethod

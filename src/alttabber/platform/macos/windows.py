@@ -615,25 +615,33 @@ class MacWindowProvider(WindowProvider):
             except Exception:
                 pass
 
-    def _ax_raise_window(self, pid: int, cg_window_id: int, title: str) -> bool:
+    def _ax_find_window_ref(
+        self, pid: int, cg_window_id: int, title: str | None
+    ):
+        """Return the AXUIElement window ref matching ``cg_window_id`` (or
+        ``title`` as a fallback) within ``pid``'s AX window list, or None.
+
+        Shared by activation and close: both need to resolve a CGWindowID to
+        an AXUIElement window ref so they can act on the right window when
+        the id came from CGWindowList (no cached ref) rather than AX.
+        """
         try:
             from ApplicationServices import (  # type: ignore
                 AXUIElementCreateApplication,
                 kAXChildrenAttribute,
                 kAXTitleAttribute,
-                kAXRaiseAction,
             )
         except ImportError:
-            return False
+            return None
         app_el = AXUIElementCreateApplication(pid)
         children = _ax_attr(app_el, kAXChildrenAttribute)
         if not children:
-            return False
+            return None
         # children is an NSArray of AXUIElements (windows).
         n = children.count() if hasattr(children, "count") else 0
         # Prefer matching the real CGWindowID -- title text is ambiguous
         # when two windows of the same app share a title (or both lack one),
-        # which otherwise always raises whichever window AX lists first.
+        # which otherwise always resolves to whichever window AX lists first.
         by_id = None
         title_fallback = None
         for i in range(n):
@@ -643,19 +651,83 @@ class MacWindowProvider(WindowProvider):
                 break
             t = _ax_attr(win, kAXTitleAttribute)
             tstr = str(t) if t else ""
-            if tstr and (tstr == title or title in tstr or tstr in title):
+            if tstr and title and (tstr == title or title in tstr or tstr in title):
                 if title_fallback is None:
                     title_fallback = win
             elif title_fallback is None and tstr:
                 title_fallback = win
         best = by_id if by_id is not None else title_fallback
+        return best
+
+    def _ax_raise_window(self, pid: int, cg_window_id: int, title: str) -> bool:
+        best = self._ax_find_window_ref(pid, cg_window_id, title)
         if best is None:
             return False
         try:
-            from ApplicationServices import AXUIElementPerformAction  # type: ignore
+            from ApplicationServices import (  # type: ignore
+                AXUIElementPerformAction,
+                kAXRaiseAction,
+            )
 
             AXUIElementPerformAction(best, kAXRaiseAction)
             _ax_set_focused(best)
+            return True
+        except Exception:
+            return False
+
+    def _ax_ref_for_window_id(self, window_id: int):
+        """Resolve ``window_id`` to an AXUIElement window ref, caching it.
+
+        Returns the cached ref from ``_ax_refs`` when one exists (the common
+        case: the id was minted by ``_ax_windows``), otherwise resolves it
+        via ``_ax_find_window_ref`` and caches the result so a later
+        activate/close reuses it. Returns None when the window can't be
+        found (e.g. a CGWindowList-only entry for an app whose AX tree is
+        temporarily unreachable while something is fullscreen).
+        """
+        ref = self._ax_refs.get(window_id)
+        if ref is not None:
+            return ref
+        pid = None
+        title = None
+        for w in self.list_windows():
+            if w.window_id == window_id:
+                pid = w.pid
+                title = w.window_title
+                break
+        if pid is None:
+            return None
+        ref = self._ax_find_window_ref(pid, window_id, title)
+        if ref is not None:
+            self._ax_refs[window_id] = ref
+        return ref
+
+    def close_window(self, window_id: int) -> bool:
+        """Close ``window_id`` via its AX close button (``kAXPressAction``).
+
+        Resolves the window to an AXUIElement ref (cached or freshly
+        resolved), fetches its ``kAXCloseButtonAttribute``, and presses it
+        -- the same action a user performs clicking the traffic-light
+        close button. Requires Accessibility permission (already needed for
+        activation).
+        """
+        ref = self._ax_ref_for_window_id(window_id)
+        if ref is None:
+            return False
+        try:
+            from ApplicationServices import (  # type: ignore
+                AXUIElementCopyAttributeValue,
+                kAXCloseButtonAttribute,
+                AXUIElementPerformAction,
+                kAXPressAction,
+            )
+
+            err, btn = AXUIElementCopyAttributeValue(
+                ref, kAXCloseButtonAttribute, None
+            )
+            if err != 0 or btn is None:
+                return False
+            AXUIElementPerformAction(btn, kAXPressAction)
             return True
         except Exception:
             return False

@@ -90,3 +90,23 @@ def logo_path() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def close_icon_path() -> Path | None:
+    """Path to the bundled close-button icon, or None if unavailable.
+    Resolves via ``importlib.resources`` (frozen app) with a repo-level
+    ``assets/close.png`` fallback for development checkouts.
+    """
+    try:
+        with resources.files("alttabber.assets").joinpath("close.png") as p:
+            resolved = Path(str(p))
+            if resolved.is_file():
+                return resolved
+    except (ModuleNotFoundError, FileNotFoundError, TypeError):
+        pass
+    here = Path(__file__).resolve()
+    for parent in (here.parent.parent.parent, here.parent.parent.parent.parent):
+        candidate = parent / "assets" / "close.png"
+        if candidate.is_file():
+            return candidate
+    return None

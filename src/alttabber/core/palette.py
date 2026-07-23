@@ -143,6 +143,7 @@ class _OverviewGrid(QWidget):
     """
 
     activate_window = Signal(int)  # window_id
+    close_window = Signal(int)  # window_id
 
     def __init__(self, scale: float = 1.0) -> None:
         super().__init__()
@@ -304,10 +305,12 @@ class _OverviewGrid(QWidget):
                     preview=pix,
                     preview_size=(pw, ph),
                     scale=self._scale,
+                    closable=True,
                 )
                 tile._signature = signature  # type: ignore[attr-defined]
                 tile.clicked.connect(lambda t=tile: self._on_tile_clicked(t))
                 tile.hovered.connect(lambda wid=e.window_id: self._on_tile_hovered(wid))
+                tile.close_clicked.connect(lambda wid=e.window_id: self._on_tile_close(wid))
             tile._window_entry = e  # type: ignore[attr-defined]
             new_cache[e.window_id] = tile
             tiles.append(tile)
@@ -321,6 +324,12 @@ class _OverviewGrid(QWidget):
         e = getattr(tile, "_window_entry", None)
         if e is not None:
             self.activate_window.emit(e.window_id)
+
+
+    def _on_tile_close(self, window_id: int) -> None:
+        # The grid is a pure view: hand the close off to the palette
+        # (which owns the backend + caches) and let it rebuild the grid.
+        self.close_window.emit(window_id)
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +405,7 @@ class PaletteWindow(QWidget):
         # --- Overview grid ---
         self._overview = _OverviewGrid(scale=self._scale)
         self._overview.activate_window.connect(self.activate_window)
+        self._overview.close_window.connect(self._on_close_window)
 
         # --- Layout ---
         self._body = QWidget()
@@ -705,8 +715,21 @@ class PaletteWindow(QWidget):
             except Exception:
                 continue
         self._results = self._results[: self.config.palette.max_results]
-
         # --- Results list ---
+        self._populate_list()
+
+        # --- Overview grid ---
+        self._update_overview(text)
+        self._sync_overview_highlight()
+
+    def _populate_list(self) -> None:
+        """Rebuild the results list widget from ``self._results``.
+
+        Factored out of :meth:`_refresh` so an optimistic close can rebuild
+        the list without re-fetching the full window/app set (and tripping
+        the provider's short list_windows cache, which would otherwise
+        resurrect the just-closed window for a fraction of a second).
+        """
         self._list.clear()
         for r in self._results:
             item = QListWidgetItem(r.name)
@@ -719,10 +742,6 @@ class PaletteWindow(QWidget):
             self._list.addItem(item)
         if self._results:
             self._list.setCurrentRow(0)
-
-        # --- Overview grid ---
-        self._update_overview(text)
-        self._sync_overview_highlight()
 
     def _update_overview(self, text: str) -> None:
         if not self.config.palette.overview_enabled:
@@ -767,3 +786,29 @@ class PaletteWindow(QWidget):
         elif r.bundle_path:
             self.launch_app.emit(r.bundle_path)
         self.hide_palette()
+
+
+    def _on_close_window(self, window_id: int) -> None:
+        """Close a window from an overview tile's close button.
+
+        Asks the backend to close the window, then optimistically drops it
+        from the in-memory window list, the preview cache, and the result
+        set, and rebuilds both panes from that (without re-fetching, which
+        would trip the provider's short list_windows cache and resurrect
+        the just-closed window for a fraction of a second). A subsequent
+        keystroke-driven ``_refresh`` re-fetches once the window is gone.
+        """
+        if self._window_provider is not None:
+            self._window_provider.close_window(window_id)
+        self._all_windows = [
+            w for w in self._all_windows if w.window_id != window_id
+        ]
+        self._tile_previews_cache.pop(window_id, None)
+        self._results = [
+            r
+            for r in self._results
+            if not (r.is_window and r.window_id == window_id)
+        ]
+        self._populate_list()
+        self._update_overview(self._field.text())
+        self._sync_overview_highlight()

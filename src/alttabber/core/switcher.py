@@ -12,13 +12,14 @@ import sys
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QObject, QRect, Qt, Signal
+from PySide6.QtCore import QObject, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QStackedLayout,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -27,6 +28,7 @@ from ..backends.base import AppProvider, WindowInfo, WindowProvider
 from .activation import activate_window_reliably
 from .config import Config
 from .mru import MRUTracker, WindowMRUTracker
+from .paths import close_icon_path
 from .screens import target_screen
 from .theme import ui_scale
 
@@ -89,6 +91,36 @@ def _cached_scaled_icon(icon_path: str | None, size: int) -> QPixmap:
     return pix
 
 
+
+_close_icon_cache: dict[int, QIcon | None] = {}
+_close_icon_path: str | None = None
+
+
+def _close_icon(size: int) -> QIcon | None:
+    """Return the bundled close-button icon scaled to ``size``, cached.
+
+    Resolves ``assets/close.png`` once (lazily) and caches the decoded
+    QIcon by size so the 512px source is only decoded/scaled once per size
+    tier even when dozens of tiles are built in a single overview rebuild.
+    Returns None if the asset is unavailable so callers can fall back.
+    """
+    global _close_icon_path
+    if _close_icon_path is None:
+        p = close_icon_path()
+        _close_icon_path = str(p) if p is not None else ""
+    if not _close_icon_path:
+        return None
+    icon = _close_icon_cache.get(size)
+    if icon is None:
+        pix = _cached_scaled_icon(_close_icon_path, size)
+        if pix.isNull():
+            icon = None
+        else:
+            icon = QIcon(pix)
+        _close_icon_cache[size] = icon
+    return icon
+
+
 def _with_count_badge(pix: QPixmap, count: int, scale: float = 1.0) -> QPixmap:
     """Return a copy of ``pix`` with a window-count badge in the top-right."""
     if pix.isNull():
@@ -114,6 +146,7 @@ def _with_count_badge(pix: QPixmap, count: int, scale: float = 1.0) -> QPixmap:
     return out
 
 
+
 class _ItemWidget(QFrame):
     """A single tile; highlights when selected.
 
@@ -127,10 +160,14 @@ class _ItemWidget(QFrame):
     can use the same tiles as the switcher overlay for its overview grid.
     Emits :pyattr:`hovered` on mouse enter so the switcher overlay can
     move its selection to whichever tile the pointer is over.
+    Emits :pyattr:`close_clicked` when a window tile's top-right close
+    button (``closable=True``) is pressed, so the host can close the
+    backing window without activating it.
     """
 
     clicked = Signal()
     hovered = Signal()
+    close_clicked = Signal()
 
     def __init__(
         self,
@@ -140,6 +177,7 @@ class _ItemWidget(QFrame):
         badge_count: int | None = None,
         preview_size: tuple[int, int] = (176, 110),
         scale: float = 1.0,
+        closable: bool = False,
     ) -> None:
         super().__init__()
         self._selected = False
@@ -153,7 +191,7 @@ class _ItemWidget(QFrame):
         w_overhead = round(20 * scale)
         h_overhead = round(42 * scale)
 
-        image_lbl = QLabel()
+        self._image_lbl = image_lbl = QLabel()
         image_lbl.setAlignment(Qt.AlignCenter)
         if has_preview:
             image_lbl.setFixedSize(*preview_size)
@@ -215,10 +253,69 @@ class _ItemWidget(QFrame):
         else:
             self.setFixedSize(max(72, round(108 * scale)), max(72, round(110 * scale)))
         self._update_style()
+        self._closable = closable
+        self._close_btn: QToolButton | None = None
+        if closable:
+            self._build_close_button(scale)
+
+    def _build_close_button(self, scale: float) -> None:
+        """Create the top-right close affordance, always visible.
+
+        A small button parented to the tile (not to the layout, so it
+        floats over the image's top-right corner rather than taking a
+        layout cell). Positioned in :meth:`resizeEvent` against the image
+        label's live geometry so it tracks the image regardless of whether
+        the tile renders a preview thumbnail or a bare icon. Visible on
+        every closable tile from the start so the affordance is
+        discoverable without a mouse hover -- the switcher/palette are
+        primarily keyboard-driven, but every tile still advertises close.
+
+        Uses the bundled ``assets/close.png`` icon (scaled to the button
+        and cached by size so the 512px source is only decoded once per
+        size tier); the icon is centered by Qt so no glyph-metric fudging
+        is needed.
+        """
+        btn = QToolButton(self)
+        diameter = max(16, round(18 * scale))
+        btn.setFixedSize(diameter, diameter)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setAutoRaise(True)
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setVisible(True)
+        icon = _close_icon(diameter)
+        if icon is not None:
+            btn.setIcon(icon)
+            btn.setIconSize(QSize(diameter, diameter))
+        else:
+            # Asset missing (e.g. frozen build without bundled data): fall
+            # back to the text glyph so the button is never blank.
+            btn.setText("×")
+        btn.setStyleSheet(
+            "QToolButton{border:none;}"
+            "QToolButton:hover{background:rgba(220,38,38,180);"
+            "border-radius:%dpx;}" % (diameter // 2)
+        )
+        btn.clicked.connect(self.close_clicked.emit)
+        self._close_btn = btn
+        self._position_close_button()
+
+    def _position_close_button(self) -> None:
+        if self._close_btn is None or self._image_lbl is None:
+            return
+        btn = self._close_btn
+        r = self._image_lbl.geometry()
+        if r.isNull():
+            return
+        btn.move(r.right() - btn.width() - 1, r.top() + 2)
+        btn.raise_()
 
     def set_selected(self, on: bool) -> None:
         self._selected = on
         self._update_style()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._position_close_button()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
         if event.button() == Qt.LeftButton:
@@ -346,6 +443,7 @@ class _FlowContainer(QFrame):
 class SwitcherOverlay(QWidget):
     activate_app = Signal(str)  # bundle_id (or app key when no bundle id)
     activate_window = Signal(int)  # window_id
+    close_window = Signal(int)  # window_id
     selection_changed = Signal()  # emitted when the highlighted tile changes
 
     def __init__(self) -> None:
@@ -478,10 +576,13 @@ class SwitcherOverlay(QWidget):
                     preview=preview,
                     preview_size=scaled_preview_size,
                     scale=self._scale,
+                    closable=True,
                 )
             index = len(tiles)
             tile.clicked.connect(lambda _=False, i=index: self._on_tile_clicked(i))
             tile.hovered.connect(lambda i=index: self._on_tile_hovered(i))
+            if isinstance(e, _WindowEntry):
+                tile.close_clicked.connect(lambda i=index: self._on_tile_close(i))
             tiles.append(tile)
         self._container.set_tiles(tiles)
         # Re-apply the screen-derived width constraint now that the tiles
@@ -507,6 +608,29 @@ class SwitcherOverlay(QWidget):
         if 0 <= index < len(self._entries):
             self._select(index)
             self.commit()
+
+    def _on_tile_close(self, index: int) -> None:
+        """Close the window behind the clicked close button.
+
+        Emits :pyattr:`close_window` so the controller can ask the backend
+        to close it, then optimistically drops the entry and rebuilds so
+        the tile vanishes immediately rather than lingering until the next
+        switcher trigger. Hides the overlay when the last window is closed.
+        """
+        if not (0 <= index < len(self._entries)):
+            return
+        e = self._entries[index]
+        wid = getattr(e, "window_id", None)
+        if wid is None:
+            return
+        self.close_window.emit(wid)
+        del self._entries[index]
+        if not self._entries:
+            self.hide()
+            return
+        self._rebuild()
+        self._select(min(self._index, len(self._entries) - 1))
+        self.selection_changed.emit()
 
     def current_entry(self):
         if not self._entries:
@@ -656,6 +780,7 @@ class SwitcherController(QObject):
         )
         self.overlay.activate_app.connect(self._on_activate_app)
         self.overlay.activate_window.connect(self._on_activate_window)
+        self.overlay.close_window.connect(self._on_close_window)
         self.overlay.selection_changed.connect(self._update_preview)
 
     # ---- build entries ----
@@ -884,3 +1009,11 @@ class SwitcherController(QObject):
 
     def _on_activate_window(self, window_id: int) -> None:
         activate_window_reliably(self._wp, window_id)
+
+    def _on_close_window(self, window_id: int) -> None:
+        # The overlay optimistically drops the tile on its own; this just
+        # asks the backend to actually close the window (AX press on the
+        # close button). No MRU touch -- a closed window leaves no recency
+        # to record, and the tracker filters stale ids against the live
+        # window list on the next trigger.
+        self._wp.close_window(window_id)
