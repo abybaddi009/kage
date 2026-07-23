@@ -147,6 +147,10 @@ class KageApp(QObject):
         self._mru = MRUTracker()
         self._wmru = WindowMRUTracker()
 
+        # Share the trackers with the palette so its window/app ordering
+        # mirrors the switcher's MRU recency.
+        self._palette.set_mru(self._mru, self._wmru)
+
         # Alt+Tab app switcher overlay.
         from .switcher import SwitcherController
 

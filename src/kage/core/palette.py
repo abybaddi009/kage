@@ -34,6 +34,7 @@ import math
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFontMetrics, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QLineEdit,
     QListWidget,
@@ -46,6 +47,7 @@ from PySide6.QtWidgets import (
 from ..backends.base import AppProvider, WindowProvider
 from .config import Config
 from .matcher import Result, match
+from .mru import MRUTracker, WindowMRUTracker
 from .screens import target_screen
 from .sources import load_sources
 from .switcher import _FlowContainer, _ItemWidget, _WindowEntry
@@ -152,6 +154,13 @@ class _OverviewGrid(QWidget):
         # builds a widget tree, which was the actual per-keystroke cost).
         self._tile_cache: dict[int, _ItemWidget] = {}
         self._tile_size: tuple[int, int] | None = None
+        # Hover-driven highlighting is gated behind an explicit arm so a
+        # tile that merely renders under an already-stationary cursor
+        # doesn't light up on its own; only an actual mouse move after the
+        # palette opens arms it (see PaletteWindow.eventFilter). Fixes the
+        # spurious highlight on show plus the follow-on where moving the
+        # mouse wouldn't re-highlight.
+        self._hover_armed = False
         self._container = _FlowContainer()
         self._container.setObjectName("overviewBox")
         self._container.setStyleSheet(
@@ -255,6 +264,20 @@ class _OverviewGrid(QWidget):
             wid = e.window_id if e is not None else None
             tile.set_selected(wid == window_id)
 
+    def set_hover_armed(self, armed: bool) -> None:
+        """Enable/disable hover-driven highlighting.
+
+        Disarmed on palette show so a tile rendering under a stationary
+        cursor doesn't light up; armed on the first real mouse move so
+        subsequent hovers highlight as expected. Keyboard-driven
+        ``highlight_window`` calls are unaffected.
+        """
+        self._hover_armed = armed
+
+    def _on_tile_hovered(self, window_id: int) -> None:
+        if self._hover_armed:
+            self.highlight_window(window_id)
+
     def _rebuild_tiles(self, pw: int, ph: int, avail_w: int) -> None:
         # A tile's dimensions are baked into its layout at construction time
         # (see ``_ItemWidget.__init__``), so a size change invalidates every
@@ -283,7 +306,7 @@ class _OverviewGrid(QWidget):
                 )
                 tile._signature = signature  # type: ignore[attr-defined]
                 tile.clicked.connect(lambda t=tile: self._on_tile_clicked(t))
-                tile.hovered.connect(lambda wid=e.window_id: self.highlight_window(wid))
+                tile.hovered.connect(lambda wid=e.window_id: self._on_tile_hovered(wid))
             tile._window_entry = e  # type: ignore[attr-defined]
             new_cache[e.window_id] = tile
             tiles.append(tile)
@@ -315,6 +338,8 @@ class PaletteWindow(QWidget):
         self._results: list[Result] = []
         self._window_provider: WindowProvider | None = None
         self._app_provider: AppProvider | None = None
+        self._mru: MRUTracker | None = None
+        self._wmru: WindowMRUTracker | None = None
         self._sources: list = load_sources()
         self._tile_previews_cache: dict[int, QPixmap] = {}
         self._all_windows: list = []  # WindowInfo list for overview filtering
@@ -387,6 +412,11 @@ class PaletteWindow(QWidget):
         layout.addWidget(self._body, stretch=1)
 
         self._field.installEventFilter(self)
+        # Catch mouse moves anywhere over the palette (even over child
+        # tiles) so the first real move arms overview hover-highlighting;
+        # enterEvents delivered to tiles that simply render under an
+        # already-stationary cursor are otherwise treated as hover.
+        QApplication.instance().installEventFilter(self)
 
         self.setStyleSheet(
             f"PaletteWindow{{background:{OVERLAY_BG};border-radius:16px;}}"
@@ -454,6 +484,19 @@ class PaletteWindow(QWidget):
         self._window_provider = window_provider
         self._app_provider = app_provider
 
+    def set_mru(
+        self, mru: MRUTracker, window_mru: WindowMRUTracker
+    ) -> None:
+        """Share the app + per-window MRU trackers with the switcher.
+
+        Ordering palette windows/apps by the same recency the switcher uses
+        keeps the two views consistent: a window raised via the switcher
+        surfaces at the top of the palette's results and overview, and vice
+        versa.
+        """
+        self._mru = mru
+        self._wmru = window_mru
+
     # ---- show / hide ----
 
     def show_palette(self) -> None:
@@ -485,6 +528,9 @@ class PaletteWindow(QWidget):
         # size the window had before this resize -- force one more pass now
         # that the real geometry is known.
         self._overview.relayout()
+        # Disarm hover so a tile rendering under the cursor on open isn't
+        # spuriously highlighted; armed again on the first real mouse move.
+        self._overview.set_hover_armed(False)
         self.show()
         self.raise_()
         self.activateWindow()
@@ -512,6 +558,19 @@ class PaletteWindow(QWidget):
                 self._list.setCurrentRow(row)
                 self._sync_overview_highlight()
                 return True
+        # Arm overview hover-highlighting on the first real mouse move over
+        # the palette window. ``enterEvent`` fires for a tile that merely
+        # renders under an already-stationary cursor on show; gating on an
+        # actual move means no spurious highlight on open and correct
+        # re-highlight once the user starts moving the mouse.
+        if (
+            event.type() == QEvent.MouseMove
+            and self.isVisible()
+            and not self._overview._hover_armed
+        ):
+            gpos = event.globalPosition().toPoint()
+            if self.rect().contains(self.mapFromGlobal(gpos)):
+                self._overview.set_hover_armed(True)
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
@@ -560,6 +619,34 @@ class PaletteWindow(QWidget):
             if not pix.isNull():
                 self._tile_previews_cache[w.window_id] = pix
 
+    def _order_windows_mru(self, windows: list) -> list:
+        """Return ``windows`` ordered by per-window MRU (most recent first).
+
+        Mirrors :meth:`SwitcherController._flat_window_entries` so the
+        palette's overview and results share the switcher's recency order.
+        Windows the tracker has never seen keep their original (provider)
+        order, appended after known ones.
+        """
+        if self._wmru is None or not windows:
+            return windows
+        ordered_ids = self._wmru.order([w.window_id for w in windows])
+        by_id = {w.window_id: w for w in windows}
+        return [by_id[wid] for wid in ordered_ids if wid in by_id]
+
+    def _order_apps_mru(self, apps: list) -> list:
+        """Return ``apps`` ordered by app MRU (most recent first).
+
+        Keys on ``bundle_id`` (falling back to ``name``), the same key the
+        switcher and the palette's own activation slot use, so an app
+        raised via either surface ranks first in both.
+        """
+        if self._mru is None or not apps:
+            return apps
+        keys = [a.bundle_id or a.name for a in apps]
+        ordered_keys = self._mru.order(keys)
+        by_key = {a.bundle_id or a.name: a for a in apps}
+        return [by_key[k] for k in ordered_keys if k in by_key]
+
     # ---- refresh ----
 
     def _schedule_refresh(self, text: str) -> None:
@@ -584,6 +671,14 @@ class PaletteWindow(QWidget):
             apps = self._app_provider.list_apps()
         except Exception:
             return
+        # Order windows and apps by the same recency the switcher uses so
+        # the palette's results and overview mirror Alt+Tab ordering: the
+        # most recently focused window/app ranks first. match()'s stable
+        # sort preserves this MRU order among equal-scoring (or scoreless,
+        # no-query) results, and _all_windows feeds the overview grid
+        # which has no further ordering of its own.
+        windows = self._order_windows_mru(windows)
+        apps = self._order_apps_mru(apps)
         self._all_windows = windows
         self._results = match(text, windows, apps, self.config.palette)
         for src in self._sources:

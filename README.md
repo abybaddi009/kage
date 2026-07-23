@@ -27,7 +27,8 @@ app, with every shortcut rebindable.
 * **Super+A launcher** — a keystroke opens a fuzzy palette of every open window
   *and* every installed app. Type a few letters, hit Enter, and the window is
   raised or the app launched. Open windows rank above apps you haven't started
-  yet.
+  yet, and the palette shares the switcher's MRU recency — what you raised last
+  ranks first in both.
 * **Live previews** — watch a thumbnail of the window you're about to land on,
   or switch to the Window Previews theme where every window is its own
   screenshot tile.
